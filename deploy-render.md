@@ -10,7 +10,7 @@ This guide provides instructions for deploying the Backdoor AI Learning Server t
    - Connect your GitHub repository
    - Select the branch to deploy (usually `main`)
    - Choose "Python" as the environment
-   - Set the build command: `chmod +x render-build.sh && ./render-build.sh`
+   - Set the build command: `python build-packages.py && chmod +x entrypoint.sh`
    - Set the start command: `./entrypoint.sh`
    - Choose the "Starter" plan (required for scientific packages)
 
@@ -35,11 +35,13 @@ This guide provides instructions for deploying the Backdoor AI Learning Server t
 ## Important Notes for Render Deployment
 
 1. Render doesn't allow `apt-get` commands during builds (read-only filesystem)
-   - The modified `render-build.sh` handles this limitation
-   - We use pre-built wheels whenever possible
+   - We use the `build-packages.py` script to handle dependencies properly
+   - All packages must have binary wheels available for Python 3.11
+   - We install packages in a specific order to avoid dependency conflicts
 
-2. Using the correct Python version is crucial for coremltools compatibility
-   - Make sure to set PYTHON_VERSION=3.11.11
+2. Scikit-learn version is critical:
+   - We use scikit-learn 1.1.3 (not 1.1.2) because it has binary wheels for Python 3.11
+   - This version should still be compatible with coremltools 7.0
 
 3. Persistent disk is required for storing:
    - SQLite database (when not using Dropbox)
@@ -53,7 +55,8 @@ If you encounter deployment issues:
 1. Check build logs for specific error messages
 2. Verify your Dropbox API key is correct
 3. Ensure you're using the "Starter" plan or higher to have enough memory
-4. Try updating scikit-learn to a version with pre-built wheels for Python 3.11
+4. If scientific packages fail to install, try using the alternative build method:
+   - Build command: `pip install --prefer-binary numpy==1.24.4 scipy==1.10.1 scikit-learn==1.1.3 && pip install -r requirements.txt && chmod +x entrypoint.sh`
 5. Check the application logs after deployment for runtime errors
 
 ## Testing Your Deployment
@@ -61,3 +64,4 @@ If you encounter deployment issues:
 After deployment, test the application by accessing:
 - Health check endpoint: `https://your-app.onrender.com/health`
 - Main API endpoint: `https://your-app.onrender.com/`
+- If the health check returns status information, your deployment is working correctly
