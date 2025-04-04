@@ -8,6 +8,7 @@ This module provides functionality to:
 """
 
 import os
+import io
 import tempfile
 import time
 import threading
@@ -223,6 +224,56 @@ class DropboxStorage:
                 self._download_db()
             
             return self.local_db_path
+            
+    def download_db_to_memory(self) -> Dict[str, Any]:
+        """
+        Download the database from Dropbox directly to memory.
+        
+        Returns:
+            Dict with db_buffer, success fields
+        """
+        with self.lock:
+            db_path = f"/{self.db_filename}"
+            try:
+                # Check if file exists on Dropbox
+                try:
+                    self.dbx.files_get_metadata(db_path)
+                    file_exists = True
+                except ApiError as e:
+                    if e.error.is_path() and e.error.get_path().is_not_found():
+                        file_exists = False
+                    else:
+                        raise
+                
+                if file_exists:
+                    # Download file to memory
+                    result = self.dbx.files_download(db_path)
+                    
+                    # Extract the bytes and store in a buffer
+                    content = result[1].content
+                    buffer = io.BytesIO(content)
+                    
+                    self.last_db_sync = time.time()
+                    logger.info(f"Downloaded database from Dropbox to memory buffer")
+                    
+                    return {
+                        'success': True,
+                        'db_buffer': buffer,
+                        'size': len(content)
+                    }
+                else:
+                    logger.info(f"Database file '{self.db_filename}' not found in Dropbox")
+                    return {
+                        'success': False,
+                        'error': 'Database not found'
+                    }
+                
+            except Exception as e:
+                logger.error(f"Error downloading database to memory: {e}")
+                return {
+                    'success': False,
+                    'error': str(e)
+                }
     
     def upload_db(self) -> bool:
         """
@@ -250,6 +301,39 @@ class DropboxStorage:
             except Exception as e:
                 logger.error(f"Error uploading database: {e}")
                 return False
+                
+    def upload_db_from_memory(self, buffer: io.BytesIO) -> Dict[str, Any]:
+        """
+        Upload database from a memory buffer to Dropbox.
+        
+        Args:
+            buffer: BytesIO buffer containing the database data
+            
+        Returns:
+            Dict with success/error information
+        """
+        with self.lock:
+            try:
+                # Reset buffer position
+                buffer.seek(0)
+                
+                # Upload file with overwrite mode
+                self.dbx.files_upload(buffer.read(), f"/{self.db_filename}", 
+                                     mode=WriteMode.overwrite)
+                
+                self.last_db_sync = time.time()
+                
+                logger.info(f"Uploaded in-memory database to Dropbox: /{self.db_filename}")
+                return {
+                    'success': True
+                }
+                
+            except Exception as e:
+                logger.error(f"Error uploading in-memory database: {e}")
+                return {
+                    'success': False,
+                    'error': str(e)
+                }
     
     def upload_model(self, data_or_path, model_name: str) -> Dict[str, Any]:
         """

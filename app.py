@@ -29,6 +29,7 @@ import sys  # Required for sys.exit in scheduler
 
 # Import from packages
 from utils.db_helpers import init_db, store_interactions, store_uploaded_model
+import io  # Required for in-memory operations
 from learning import (
     ensure_nltk_resources, 
     IntentClassifier,
@@ -53,14 +54,29 @@ logger = logging.getLogger(__name__)
 # Create a thread lock for database operations
 db_lock = threading.RLock()
 
-# Create temporary directory for NLTK data
-temp_nltk_dir = tempfile.mkdtemp()
-nltk.data.path.append(temp_nltk_dir)
+# For NLTK resources, use Dropbox if enabled, otherwise use temporary directory
+if config.DROPBOX_ENABLED:
+    try:
+        # Import NLTK helpers for Dropbox integration
+        from utils.nltk_helpers import init_nltk_dropbox_resources, DropboxResourceProvider
+        
+        # Initialize NLTK resources in Dropbox
+        logger.info("Initializing NLTK resources in Dropbox - no local files needed")
+        init_nltk_dropbox_resources(config.NLTK_RESOURCES)
+        logger.info("NLTK configured to use Dropbox for all resources")
+    except Exception as e:
+        logger.error(f"Error setting up NLTK Dropbox integration: {e}")
+        # Fall back to temporary directory
+        temp_nltk_dir = tempfile.mkdtemp()
+        nltk.data.path.append(temp_nltk_dir)
+        logger.warning(f"Falling back to local temporary directory for NLTK data: {temp_nltk_dir}")
+else:
+    # Create temporary directory for NLTK data when not using Dropbox
+    temp_nltk_dir = tempfile.mkdtemp()
+    nltk.data.path.append(temp_nltk_dir)
+    logger.info(f"Using local temporary directory for NLTK data: {temp_nltk_dir}")
 
 logger.info("Operating in memory-only mode with Dropbox storage - no local directories needed")
-
-# This section has been removed as we're not using local directories anymore
-# NLTK uses temporary directory configured above
 
 # Ensure NLTK resources are available
 ensure_nltk_resources()
@@ -85,7 +101,17 @@ except Exception as e:
     logger.error(f"Failed to initialize storage system: {e}")
     logger.warning("Will attempt to use local storage directly")
 
-# Initialize database on startup
+# Initialize database on startup - uses memory DB with Dropbox when enabled
+if config.DROPBOX_ENABLED:
+    logger.info("Initializing in-memory database with Dropbox synchronization")
+    try:
+        from utils.memory_db import init_memory_db
+        mem_db = init_memory_db()  # Initialize shared in-memory DB
+        logger.info("In-memory database initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing memory database: {e}")
+
+# Initialize database schema (in-memory or file-based depending on config)
 init_db(config.DB_PATH)
 
 import os
@@ -412,10 +438,11 @@ def get_stats():
     """
     API endpoint for getting system statistics.
     """
-    conn = None
     try:
-        with db_lock:
-            conn = sqlite3.connect(config.DB_PATH)
+        # Use database connection helper to automatically use in-memory DB if configured
+        from utils.db_helpers import get_connection
+        
+        with get_connection(config.DB_PATH) as conn:
             cursor = conn.cursor()
             
             # Get total interactions
@@ -586,36 +613,72 @@ def health_check():
         # Check if database is accessible
         conn = None
         try:
-            conn = sqlite3.connect(config.DB_PATH)
-            conn.execute("SELECT 1")
-            db_status = "healthy"
+            if config.DROPBOX_ENABLED:
+                # Check in-memory database
+                from utils.memory_db import get_memory_db
+                conn = get_memory_db()
+                conn.execute("SELECT 1")
+                db_status = "healthy (in-memory with Dropbox sync)"
+            else:
+                # Check file-based database
+                conn = sqlite3.connect(config.DB_PATH)
+                conn.execute("SELECT 1")
+                db_status = "healthy (local file)"
         except Exception as e:
             db_status = f"unhealthy: {e}"
         finally:
-            if conn:
+            if conn and not config.DROPBOX_ENABLED:
+                # Only close for file-based DB
                 conn.close()
-                
-        # Check if model directory is accessible    
-        model_status = "healthy" if os.access(config.MODEL_DIR, os.R_OK | os.W_OK) else "unhealthy: permission denied"
         
+        # Check Dropbox connection if enabled
+        if config.DROPBOX_ENABLED:
+            try:
+                from utils.dropbox_storage import get_dropbox_storage
+                dropbox_storage = get_dropbox_storage()
+                # Just check if we can access the account info
+                dropbox_storage.dbx.users_get_current_account()
+                dropbox_status = "connected"
+            except Exception as e:
+                dropbox_status = f"disconnected: {e}"
+        else:
+            dropbox_status = "disabled"
+                
         # Check scheduler status
         scheduler_status = "running" if scheduler_thread and scheduler_thread.is_alive() else "not running"
         
-        # Check model files
+        # Check model count from DB rather than filesystem
         try:
-            model_files = [f for f in os.listdir(config.MODEL_DIR) if f.endswith(".mlmodel")]
-            model_count = len(model_files)
-        except Exception:
-            model_count = "error"
-            
-        return jsonify({
+            from utils.db_helpers import get_connection
+            with get_connection(config.DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM model_versions")
+                model_count = cursor.fetchone()[0]
+        except Exception as e:
+            model_count = f"error: {e}"
+        
+        # Build health response object
+        health_response = {
             'status': 'up',
             'database': db_status,
-            'models': model_status,
+            'dropbox': dropbox_status,
             'scheduler': scheduler_status,
             'model_count': model_count,
+            'storage_mode': config.STORAGE_MODE,
+            'platform': config.PLATFORM,
             'timestamp': datetime.now().isoformat()
-        })
+        }
+        
+        # Add memory info
+        import psutil
+        memory = psutil.virtual_memory()
+        health_response['memory'] = {
+            'total': f"{memory.total / (1024 * 1024):.1f} MB",
+            'available': f"{memory.available / (1024 * 1024):.1f} MB",
+            'percent_used': f"{memory.percent}%"
+        }
+            
+        return jsonify(health_response)
     except Exception as e:
         return jsonify({
             'status': 'error',
