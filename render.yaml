@@ -21,12 +21,8 @@ services:
       - key: DROPBOX_MODELS_FOLDER
         value: "backdoor_models"
       - key: DROPBOX_API_KEY
-        sync: false  # Add this key manually through Render dashboard
+        sync: true  # Add this key manually through Render dashboard
       - key: NLTK_DATA
         value: "/opt/render/project/nltk_data"
       - key: GUNICORN_WORKERS
         value: "2"  # Use Gunicorn instead of Flask dev server
-    disk:
-      name: backdoor-ai-data
-      mountPath: /opt/render/project
-      sizeGB: 1
