@@ -24,8 +24,8 @@ service:
   definition:
     type: docker
     resources:
-      cpu: 0.25     # Starting with minimal resources
-      memory: 512M  # 512MB of RAM
+      cpu: 0.5      # Increased CPU for scikit-learn
+      memory: 1G    # Increased RAM for scikit-learn
       volumes:
         - mount_path: /tmp
           type: ephemeral
@@ -48,12 +48,14 @@ service:
         value: "dropbox"
       - name: KOYEB_DEPLOYMENT
         value: "true"
+      - name: GUNICORN_WORKERS
+        value: "2"
+      - name: MEMORY_OPTIMIZED
+        value: "true"
     
-    # Using pre-built Docker image
+    # Build using Dockerfile
     docker:
-      image: python:3.11.11-slim
-      command: sh -c "pip install -r requirements.txt && python app.py"
-      working_dir: /app
+      dockerfile: Dockerfile
       volumes:
         - mount_path: /app
           type: ephemeral

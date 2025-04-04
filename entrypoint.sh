@@ -12,12 +12,22 @@ if [ -n "$KOYEB_DEPLOYMENT" ]; then
 elif [ -n "$RENDER" ]; then
     echo "Running on Render platform"
     # Directories should be in persistent volume already
+    mkdir -p ${RENDER_DISK_PATH}/data ${RENDER_DISK_PATH}/models ${RENDER_DISK_PATH}/nltk_data
 fi
 
-# Install NLTK resources to avoid runtime downloads
-echo "Installing NLTK resources..."
-python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('wordnet')"
+# Verify NLTK resources are installed
+echo "Verifying NLTK resources..."
+python -c "import nltk; nltk.data.path.append('/app/nltk_data'); [nltk.download(x) for x in ['punkt', 'stopwords', 'wordnet'] if not nltk.data.find(x)]"
 
-# Run the application
-echo "Starting application..."
-exec python app.py
+# Run health check to verify scikit-learn is working
+echo "Verifying scikit-learn installation..."
+python -c "import sklearn; print(f'scikit-learn version: {sklearn.__version__}')"
+
+# Choose how to run the application based on environment
+if [ -n "$GUNICORN_WORKERS" ]; then
+    echo "Starting application with Gunicorn..."
+    exec gunicorn --bind 0.0.0.0:${PORT:-10000} --workers ${GUNICORN_WORKERS:-2} "app:app"
+else
+    echo "Starting application with Flask development server..."
+    exec python app.py
+fi
