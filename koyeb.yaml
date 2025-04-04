@@ -1,0 +1,59 @@
+# Koyeb configuration for Backdoor AI Learning Server
+service:
+  name: backdoor-ai-learning
+  
+  ports:
+    - port: 10000
+      protocol: http
+  
+  routes:
+    - path: /
+      protocol: http
+  
+  instances: 1  # Adjust based on your scaling needs
+  
+  regions:
+    - fra  # Frankfurt, change to your preferred region
+  
+  health:
+    path: /health
+    timeout: 10s
+    interval: 30s
+    initial_delay: 30s
+  
+  definition:
+    type: docker
+    resources:
+      cpu: 0.25     # Starting with minimal resources
+      memory: 512M  # 512MB of RAM
+      volumes:
+        - mount_path: /tmp
+          type: ephemeral
+          size: 1G
+    
+    env:
+      - name: PORT
+        value: "10000"
+      - name: PYTHON_VERSION
+        value: "3.11.11"
+      - name: DROPBOX_ENABLED
+        value: "true"
+      - name: DROPBOX_API_KEY
+        secret: dropbox-api-key  # Create this secret in Koyeb dashboard
+      - name: DROPBOX_DB_FILENAME
+        value: "backdoor_ai_db.db" 
+      - name: DROPBOX_MODELS_FOLDER
+        value: "backdoor_models"
+      - name: STORAGE_MODE
+        value: "dropbox"
+      - name: KOYEB_DEPLOYMENT
+        value: "true"
+    
+    # Using pre-built Docker image
+    docker:
+      image: python:3.11.11-slim
+      command: sh -c "pip install -r requirements.txt && python app.py"
+      working_dir: /app
+      volumes:
+        - mount_path: /app
+          type: ephemeral

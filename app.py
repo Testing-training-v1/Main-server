@@ -69,30 +69,21 @@ ensure_nltk_resources()
 app = Flask(__name__)
 CORS(app)
 
-# Check if Dropbox integration is enabled
-if config.DROPBOX_ENABLED:
-    try:
-        # Import Dropbox storage module
-        from utils.dropbox_storage import init_dropbox_storage, get_dropbox_storage
-        
-        # Initialize Dropbox storage with API key
-        dropbox_storage = init_dropbox_storage(
-            config.DROPBOX_API_KEY,
-            config.DROPBOX_DB_FILENAME,
-            config.DROPBOX_MODELS_FOLDER
-        )
-        
-        logger.info(f"Dropbox storage initialized successfully")
-        logger.info(f"Using database: {config.DROPBOX_DB_FILENAME}")
-        logger.info(f"Using models folder: {config.DROPBOX_MODELS_FOLDER}")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize Dropbox storage: {e}")
-        logger.warning("Falling back to local storage")
-        # Disable Dropbox mode
-        config.DROPBOX_ENABLED = False
-        # Also update the compatibility variable
-        config.GOOGLE_DRIVE_ENABLED = False
+# Initialize storage system
+try:
+    # Import storage factory
+    from utils.storage_factory import initialize_storage, get_storage
+    
+    # Initialize all configured storage backends
+    initialize_storage()
+    
+    # Get the active storage backend
+    storage = get_storage()
+    logger.info(f"Storage initialized successfully using: {config.STORAGE_MODE}")
+    
+except Exception as e:
+    logger.error(f"Failed to initialize storage system: {e}")
+    logger.warning("Will attempt to use local storage directly")
 
 # Initialize database on startup
 init_db(config.DB_PATH)

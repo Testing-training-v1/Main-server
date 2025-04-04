@@ -8,3 +8,21 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.11"  # Ensure compatibility with coremltools
+      - key: RENDER
+        value: "true"
+      - key: DROPBOX_ENABLED
+        value: "true"
+      - key: STORAGE_MODE
+        value: "dropbox"
+      - key: MEMORY_OPTIMIZED
+        value: "true"
+      - key: DROPBOX_DB_FILENAME
+        value: "backdoor_ai_db.db"
+      - key: DROPBOX_MODELS_FOLDER
+        value: "backdoor_models"
+      - key: DROPBOX_API_KEY
+        sync: false  # Add this key manually through Render dashboard
+    disk:
+      name: backdoor-ai-data
+      mountPath: /opt/render/project
+      sizeGB: 1
