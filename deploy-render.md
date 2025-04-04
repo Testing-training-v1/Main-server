@@ -17,7 +17,7 @@ This guide provides instructions for deploying the Backdoor AI Learning Server t
 3. Add environment variables:
    - `PYTHON_VERSION`: 3.11.11
    - `DROPBOX_ENABLED`: true
-   - `DROPBOX_API_KEY`: [your Dropbox API key]
+   - Note: Dropbox API key is now hardcoded in config.py
    - `DROPBOX_DB_FILENAME`: backdoor_ai_db.db
    - `DROPBOX_MODELS_FOLDER`: backdoor_models
    - `STORAGE_MODE`: dropbox

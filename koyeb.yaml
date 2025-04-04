@@ -38,8 +38,7 @@ service:
         value: "3.11.11"
       - name: DROPBOX_ENABLED
         value: "true"
-      - name: DROPBOX_API_KEY
-        secret: dropbox-api-key  # Create this secret in Koyeb dashboard
+      # DROPBOX_API_KEY is now hardcoded in config.py - no need to set it as a secret
       - name: DROPBOX_DB_FILENAME
         value: "backdoor_ai_db.db" 
       - name: DROPBOX_MODELS_FOLDER
