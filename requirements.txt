@@ -1,0 +1,11 @@
+flask==2.3.3
+flask-cors==4.0.1
+schedule==1.2.2
+pandas==2.0.3
+scikit-learn==1.1.2  # Downgraded for compatibility with coremltools
+joblib==1.4.2
+coremltools==7.0  # Newer version, less likely to need apt
+numpy==1.26.4
+nltk==3.8.1
+dropbox==11.36.2  # For Dropbox integration
+requests==2.31.0  # For model download and API calls
