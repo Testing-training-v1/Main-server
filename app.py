@@ -89,10 +89,22 @@ except Exception as e:
 init_db(config.DB_PATH)
 
 import os
-# Import Dropbox storage functionality
+# Import and initialize Dropbox storage functionality
 if config.DROPBOX_ENABLED:
     from utils.dropbox_storage import init_dropbox_storage, get_dropbox_storage
     from learning.trainer_dropbox import check_base_model_in_dropbox
+    
+    # Explicitly initialize Dropbox storage with API key from config
+    try:
+        dropbox_storage = init_dropbox_storage(
+            config.DROPBOX_API_KEY,
+            config.DROPBOX_DB_FILENAME,
+            config.DROPBOX_MODELS_FOLDER
+        )
+        logger.info("Dropbox storage explicitly initialized in app startup")
+    except Exception as e:
+        logger.error(f"Failed to initialize Dropbox storage in app startup: {e}")
+        config.DROPBOX_ENABLED = False  # Disable Dropbox if initialization fails
 
 # Check for base model in Dropbox
 try:
