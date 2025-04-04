@@ -31,14 +31,41 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Import Dropbox storage if enabled
+# Placeholders for Dropbox storage
 _dropbox_storage = None
-if DROPBOX_ENABLED:  
+_dropbox_initialized = False
+
+def _init_dropbox_storage():
+    """Initialize Dropbox storage if enabled and not already initialized"""
+    global _dropbox_storage, _dropbox_initialized
+    
+    if DROPBOX_ENABLED and not _dropbox_initialized:
+        try:
+            from utils.dropbox_storage import init_dropbox_storage
+            
+            # Initialize using config values
+            import config
+            _dropbox_storage = init_dropbox_storage(
+                config.DROPBOX_API_KEY,
+                config.DROPBOX_DB_FILENAME,
+                config.DROPBOX_MODELS_FOLDER
+            )
+            
+            _dropbox_initialized = True
+            logger.info("Dropbox storage integration initialized and enabled")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not initialize Dropbox storage: {e}")
+            logger.warning("Falling back to local storage")
+            return False
+    
+    return _dropbox_initialized
+
+# Initialize Dropbox if enabled
+if DROPBOX_ENABLED:
     try:
-        from utils.dropbox_storage import get_dropbox_storage
-        _dropbox_storage = get_dropbox_storage()
-        logger.info("Dropbox storage integration enabled")
-    except (ImportError, RuntimeError) as e:
+        _init_dropbox_storage()
+    except Exception as e:
         logger.warning(f"Could not initialize Dropbox storage: {e}")
         logger.warning("Falling back to local storage")
         DROPBOX_ENABLED = False
@@ -55,14 +82,22 @@ def get_connection(db_path: str, row_factory: bool = False):
     Yields:
         sqlite3.Connection: Database connection
     """
-    # Use Dropbox storage if enabled
-    if DROPBOX_ENABLED and _dropbox_storage:
-        # Get local path from Dropbox storage
-        try:
-            local_db_path = _dropbox_storage.get_db_path()
-        except Exception as e:
-            logger.error(f"Failed to get database from Dropbox: {e}")
-            logger.warning(f"Falling back to local database at {db_path}")
+    # Use Dropbox storage if enabled - make sure it's initialized
+    if DROPBOX_ENABLED:
+        # Make sure Dropbox is initialized
+        if not _dropbox_initialized:
+            if not _init_dropbox_storage():
+                logger.warning("Failed to initialize Dropbox storage on demand")
+                
+        # Get local path from Dropbox storage if available
+        if _dropbox_storage:
+            try:
+                local_db_path = _dropbox_storage.get_db_path()
+            except Exception as e:
+                logger.error(f"Failed to get database from Dropbox: {e}")
+                logger.warning(f"Falling back to local database at {db_path}")
+                local_db_path = db_path
+        else:
             local_db_path = db_path
     else:
         local_db_path = db_path
