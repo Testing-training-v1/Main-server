@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: backdoor-ai
+    env: python
+    plan: free  # Use 'starter' or higher for persistent disks beyond 1GB
+    buildCommand: "python -m pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "python app.py"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"  # Ensure compatibility with coremltools
