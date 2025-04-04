@@ -51,9 +51,9 @@ export DATA_DIR MODELS_DIR NLTK_DATA_DIR
 echo "Directory information:"
 ls -la /tmp /app "$DATA_DIR" "$MODELS_DIR" "$NLTK_DATA_DIR" 2>/dev/null || echo "Could not list directories"
 
-# Verify NLTK resources are installed
-echo "Verifying NLTK resources..."
-python -c "import nltk, os; nltk.data.path.append('$NLTK_DATA_DIR'); print(f'NLTK paths: {nltk.data.path}'); [nltk.download(x, download_dir='$NLTK_DATA_DIR') for x in ['punkt', 'stopwords', 'wordnet'] if not nltk.data.find(x)]"
+# Install NLTK resources directly (safer approach)
+echo "Installing NLTK resources..."
+python -c "import nltk; nltk.data.path.append('$NLTK_DATA_DIR'); print(f'NLTK paths: {nltk.data.path}'); nltk.download('punkt', download_dir='$NLTK_DATA_DIR', quiet=True); nltk.download('stopwords', download_dir='$NLTK_DATA_DIR', quiet=True); nltk.download('wordnet', download_dir='$NLTK_DATA_DIR', quiet=True); print('NLTK resources installed successfully')"
 
 # Run health check to verify scikit-learn is working
 echo "Verifying scikit-learn installation..."

@@ -46,8 +46,9 @@ COPY . .
 # Create required directories
 RUN mkdir -p /tmp/data /tmp/models /tmp/nltk_data
 
-# Install NLTK data
-RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopwords', quiet=True); nltk.download('wordnet', quiet=True)"
+# Install NLTK data with explicit directory
+RUN mkdir -p /app/nltk_data && \
+    python -c "import nltk; nltk.data.path.append('/app/nltk_data'); nltk.download('punkt', download_dir='/app/nltk_data', quiet=True); nltk.download('stopwords', download_dir='/app/nltk_data', quiet=True); nltk.download('wordnet', download_dir='/app/nltk_data', quiet=True); print('NLTK resources installed successfully')"
 
 # Verify installations
 RUN python -c "import sys; print(f'Python version: {sys.version}')" && \
