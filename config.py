@@ -21,32 +21,74 @@ logger = logging.getLogger(__name__)
 IS_RENDER = os.getenv("RENDER", "").lower() in ["true", "1", "yes"]
 IS_KOYEB = os.getenv("KOYEB_DEPLOYMENT", "").lower() in ["true", "1", "yes"]
 
-# Detect platform and set appropriate base paths
+# Use environment variables if set, otherwise use platform-specific defaults
+DATA_DIR = os.getenv("DATA_DIR", None)
+MODEL_DIR = os.getenv("MODELS_DIR", None)
+NLTK_DATA_PATH = os.getenv("NLTK_DATA_DIR", None)
+
+# Detect platform and set appropriate base paths if not set by environment variables
 if IS_RENDER:
     logger.info("Running on Render.com platform")
-    BASE_DIR = os.getenv("RENDER_DISK_PATH", "/opt/render/project")
     PLATFORM = "render"
+    # Use /tmp for Render.com if not set in environment
+    if not DATA_DIR:
+        DATA_DIR = "/tmp/data"
+    if not MODEL_DIR:
+        MODEL_DIR = "/tmp/models"
+    if not NLTK_DATA_PATH:
+        NLTK_DATA_PATH = "/tmp/nltk_data"
 elif IS_KOYEB:
     logger.info("Running on Koyeb.com platform")
-    BASE_DIR = "/tmp"  # Koyeb uses ephemeral storage
     PLATFORM = "koyeb"
+    # Use /tmp for Koyeb if not set in environment
+    if not DATA_DIR:
+        DATA_DIR = "/tmp/data"
+    if not MODEL_DIR:
+        MODEL_DIR = "/tmp/models"
+    if not NLTK_DATA_PATH:
+        NLTK_DATA_PATH = "/tmp/nltk_data"
 else:
     logger.info("Running in local/custom environment")
-    BASE_DIR = os.getenv("BASE_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     PLATFORM = "local"
+    # Use local paths if not set in environment
+    BASE_DIR = os.getenv("BASE_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if not DATA_DIR:
+        DATA_DIR = os.path.join(BASE_DIR, "data")
+    if not MODEL_DIR:
+        MODEL_DIR = os.path.join(BASE_DIR, "models")
+    if not NLTK_DATA_PATH:
+        NLTK_DATA_PATH = os.path.join(BASE_DIR, "nltk_data")
+
+# Log the paths being used
+logger.info(f"Using DATA_DIR: {DATA_DIR}")
+logger.info(f"Using MODEL_DIR: {MODEL_DIR}")
+logger.info(f"Using NLTK_DATA_PATH: {NLTK_DATA_PATH}")
 
 # Server settings
 PORT = int(os.getenv("PORT", 10000))
 
-# Storage paths - ensure they exist
-DATA_DIR = os.path.join(BASE_DIR, "data")
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-NLTK_DATA_PATH = os.path.join(BASE_DIR, "nltk_data")
+# Storage paths - ensure they exist with error handling
 UPLOADED_MODELS_DIR = os.path.join(MODEL_DIR, "uploaded")
 
-# Ensure directories exist
+# Ensure directories exist with error handling
 for directory in [DATA_DIR, MODEL_DIR, NLTK_DATA_PATH, UPLOADED_MODELS_DIR]:
-    os.makedirs(directory, exist_ok=True)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        logger.info(f"Created directory: {directory}")
+    except PermissionError:
+        logger.warning(f"Permission denied creating directory: {directory}")
+        # If this is a critical directory, we need to handle the error
+        if directory == DATA_DIR:
+            # Fallback to a temporary directory
+            DATA_DIR = tempfile.mkdtemp()
+            logger.info(f"Using temporary directory instead: {DATA_DIR}")
+        elif directory == MODEL_DIR:
+            MODEL_DIR = tempfile.mkdtemp()
+            UPLOADED_MODELS_DIR = os.path.join(MODEL_DIR, "uploaded")
+            os.makedirs(UPLOADED_MODELS_DIR, exist_ok=True)
+            logger.info(f"Using temporary directory instead: {MODEL_DIR}")
+    except Exception as e:
+        logger.error(f"Error creating directory {directory}: {e}")
 
 # Database path
 DB_PATH = os.path.join(DATA_DIR, "interactions.db")

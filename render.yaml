@@ -23,8 +23,12 @@ services:
         value: "backdoor_models"
       - key: DROPBOX_API_KEY
         sync: false  # Add this key manually through Render dashboard
-      - key: NLTK_DATA
-        value: "/opt/render/project/nltk_data"
+      - key: NLTK_DATA_DIR  # Use environment variable for NLTK data
+        value: "/tmp/nltk_data"
+      - key: DATA_DIR  # Use environment variable for data directory
+        value: "/tmp/data"
+      - key: MODELS_DIR  # Use environment variable for models directory
+        value: "/tmp/models"
       - key: GUNICORN_WORKERS
         value: "2"  # Use Gunicorn instead of Flask dev server
       - key: PIP_EXTRA_INDEX_URL  # Include the PyPI index for scientific packages
@@ -33,8 +37,8 @@ services:
         value: "1"
       - key: PIP_ONLY_BINARY
         value: "numpy,scipy,scikit-learn,pandas"
-    # Use persistent disk for data storage
+    # Use persistent disk for data storage, but with a different path
     disk:
       name: backdoor-ai-data
-      mountPath: /opt/render/project
+      mountPath: /app/disk  # Move to /app/disk which should be writable
       sizeGB: 1
