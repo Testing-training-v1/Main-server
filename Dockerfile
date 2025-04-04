@@ -4,11 +4,13 @@ FROM python:3.11.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including python3-distutils
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     python3-dev \
+    python3-distutils \
+    python3-setuptools \
     build-essential \
     libatlas-base-dev \
     gfortran \
@@ -19,12 +21,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
-# Install dependencies with special handling for scientific packages
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir wheel setuptools cython
+# Install basic build tools before any pip operations
+RUN python -m ensurepip --upgrade || true
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install Cython and other build tools
+RUN python -m pip install --no-cache-dir cython
 
 # Install scientific packages first to ensure proper version resolution
-RUN pip install --no-cache-dir --prefer-binary \
+# Use --no-build-isolation to prevent pip from creating a new build environment
+RUN python -m pip install --no-cache-dir --prefer-binary --no-build-isolation \
     numpy==1.24.4 \
     scipy==1.10.1 \
     pandas==2.0.3 \
@@ -32,7 +38,7 @@ RUN pip install --no-cache-dir --prefer-binary \
     joblib==1.3.2
 
 # Install remaining dependencies
-RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
+RUN python -m pip install --no-cache-dir --prefer-binary -r requirements.txt
 
 # Copy application code
 COPY . .
@@ -41,10 +47,11 @@ COPY . .
 RUN mkdir -p /tmp/data /tmp/models /tmp/nltk_data
 
 # Install NLTK data
-RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('wordnet')"
+RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopwords', quiet=True); nltk.download('wordnet', quiet=True)"
 
 # Verify installations
-RUN python -c "import numpy; print(f'numpy version: {numpy.__version__}')" && \
+RUN python -c "import sys; print(f'Python version: {sys.version}')" && \
+    python -c "import numpy; print(f'numpy version: {numpy.__version__}')" && \
     python -c "import sklearn; print(f'scikit-learn version: {sklearn.__version__}')" && \
     python -c "import coremltools; print(f'coremltools version: {coremltools.__version__}')"
 

@@ -1,29 +1,67 @@
-services:
-  - type: web
-    name: backdoor-ai
-    env: python
-    plan: free  # Use 'starter' or higher for persistent disks beyond 1GB
-    buildCommand: "chmod +x render-build.sh && ./render-build.sh"
-    startCommand: "./entrypoint.sh"
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.11"  # Ensure compatibility with coremltools
-      - key: RENDER
+# Koyeb configuration for Backdoor AI Learning Server
+service:
+  name: backdoor-ai-learning
+  
+  ports:
+    - port: 10000
+      protocol: http
+  
+  routes:
+    - path: /
+      protocol: http
+  
+  instances: 1  # Adjust based on your scaling needs
+  
+  regions:
+    - fra  # Frankfurt, change to your preferred region
+  
+  health:
+    path: /health
+    timeout: 10s
+    interval: 30s
+    initial_delay: 30s
+  
+  definition:
+    type: docker
+    resources:
+      cpu: 0.5      # Increased CPU for scikit-learn
+      memory: 1G    # Increased RAM for scikit-learn
+      volumes:
+        - mount_path: /tmp
+          type: ephemeral
+          size: 1G
+    
+    env:
+      - name: PORT
+        value: "10000"
+      - name: PYTHON_VERSION
+        value: "3.11.11"
+      - name: DROPBOX_ENABLED
         value: "true"
-      - key: DROPBOX_ENABLED
-        value: "true"
-      - key: STORAGE_MODE
-        value: "dropbox"
-      - key: MEMORY_OPTIMIZED
-        value: "true"
-      - key: DROPBOX_DB_FILENAME
-        value: "backdoor_ai_db.db"
-      - key: DROPBOX_MODELS_FOLDER
+      - name: DROPBOX_API_KEY
+        secret: dropbox-api-key  # Create this secret in Koyeb dashboard
+      - name: DROPBOX_DB_FILENAME
+        value: "backdoor_ai_db.db" 
+      - name: DROPBOX_MODELS_FOLDER
         value: "backdoor_models"
-      - key: DROPBOX_API_KEY
-        value: ""  # Add this key manually through Render dashboard
-        sync: false  # This should be set through the Render dashboard
-      - key: NLTK_DATA
-        value: "/opt/render/project/nltk_data"
-      - key: GUNICORN_WORKERS
-        value: "2"  # Use Gunicorn instead of Flask dev server
+      - name: STORAGE_MODE
+        value: "dropbox"
+      - name: KOYEB_DEPLOYMENT
+        value: "true"
+      - name: GUNICORN_WORKERS
+        value: "2"
+      - name: MEMORY_OPTIMIZED
+        value: "true"
+      - name: NLTK_DATA_DIR
+        value: "/tmp/nltk_data"
+      - name: DATA_DIR
+        value: "/tmp/data"
+      - name: MODELS_DIR
+        value: "/tmp/models"
+    
+    # Build using Dockerfile (preferred)
+    docker:
+      dockerfile: Dockerfile
+      volumes:
+        - mount_path: /app
+          type: ephemeral
