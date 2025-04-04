@@ -4,7 +4,7 @@ services:
     env: python
     plan: starter  # Use 'starter' for sufficient resources to build scientific packages
     runtime: python  # Use Python runtime
-    buildCommand: "chmod +x render-build.sh && ./render-build.sh"
+    buildCommand: "python build-packages.py && chmod +x entrypoint.sh"
     startCommand: "./entrypoint.sh"
     envVars:
       - key: PYTHON_VERSION
@@ -31,6 +31,8 @@ services:
         value: "https://pypi.org/simple"
       - key: PIP_PREFER_BINARY
         value: "1"
+      - key: PIP_ONLY_BINARY
+        value: "numpy,scipy,scikit-learn,pandas"
     # Use persistent disk for data storage
     disk:
       name: backdoor-ai-data
