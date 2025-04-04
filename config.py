@@ -26,27 +26,31 @@ DATA_DIR = os.getenv("DATA_DIR", None)
 MODEL_DIR = os.getenv("MODELS_DIR", None)
 NLTK_DATA_PATH = os.getenv("NLTK_DATA_DIR", None)
 
-# Detect platform and set appropriate base paths if not set by environment variables
+# Set a base directory for all environments
 if IS_RENDER:
     logger.info("Running on Render.com platform")
     PLATFORM = "render"
+    # For Render, use /tmp or RENDER_DISK_PATH if available
+    BASE_DIR = os.getenv("RENDER_DISK_PATH", "/tmp")
     # Use /tmp for Render.com if not set in environment
     if not DATA_DIR:
-        DATA_DIR = "/tmp/data"
+        DATA_DIR = os.path.join(BASE_DIR, "data")
     if not MODEL_DIR:
-        MODEL_DIR = "/tmp/models"
+        MODEL_DIR = os.path.join(BASE_DIR, "models")
     if not NLTK_DATA_PATH:
-        NLTK_DATA_PATH = "/tmp/nltk_data"
+        NLTK_DATA_PATH = os.path.join(BASE_DIR, "nltk_data")
 elif IS_KOYEB:
     logger.info("Running on Koyeb.com platform")
     PLATFORM = "koyeb"
+    # For Koyeb, use /tmp
+    BASE_DIR = "/tmp"
     # Use /tmp for Koyeb if not set in environment
     if not DATA_DIR:
-        DATA_DIR = "/tmp/data"
+        DATA_DIR = os.path.join(BASE_DIR, "data")
     if not MODEL_DIR:
-        MODEL_DIR = "/tmp/models"
+        MODEL_DIR = os.path.join(BASE_DIR, "models")
     if not NLTK_DATA_PATH:
-        NLTK_DATA_PATH = "/tmp/nltk_data"
+        NLTK_DATA_PATH = os.path.join(BASE_DIR, "nltk_data")
 else:
     logger.info("Running in local/custom environment")
     PLATFORM = "local"
@@ -169,6 +173,9 @@ elif STORAGE_MODE == "google_drive" and not GOOGLE_DRIVE_ENABLED:
     logger.warning("Google Drive storage requested but not enabled. Falling back to local storage.")
     STORAGE_MODE = "local"
 
+# Final logging of configuration
 logger.info(f"Using {STORAGE_MODE} storage mode")
-logger.info(f"Base directory: {BASE_DIR}")
+logger.info(f"Root directory: {BASE_DIR}")
+logger.info(f"Data directory: {DATA_DIR}")
+logger.info(f"Models directory: {MODEL_DIR}")
 logger.info(f"Database path: {DB_PATH}")
