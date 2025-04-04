@@ -21,8 +21,7 @@ services:
         value: "backdoor_ai_db.db"
       - key: DROPBOX_MODELS_FOLDER
         value: "backdoor_models"
-      - key: DROPBOX_API_KEY
-        sync: false  # Add this key manually through Render dashboard
+      # DROPBOX_API_KEY is now hardcoded in config.py - no need to set it in environment
       - key: NLTK_DATA_DIR  # Use environment variable for NLTK data
         value: "/tmp/nltk_data"
       - key: DATA_DIR  # Use environment variable for data directory

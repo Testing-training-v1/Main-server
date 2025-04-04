@@ -7,10 +7,7 @@ This guide explains how to deploy the Backdoor AI Learning Server on Koyeb using
 This is the preferred approach as it handles the system dependencies properly.
 
 1. Ensure you have the [Koyeb CLI](https://www.koyeb.com/docs/cli/installation) installed
-2. Create a secret for your Dropbox API key:
-   ```
-   koyeb secret create dropbox-api-key -v "YOUR_DROPBOX_API_KEY"
-   ```
+2. No need to create a Dropbox API key secret as it's now hardcoded in the application
 3. Deploy the application:
    ```
    koyeb app create --name backdoor-ai --git github.com/Backdoor-main/Main-server --git-branch main --git-builder-image docker
