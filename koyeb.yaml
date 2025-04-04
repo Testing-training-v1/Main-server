@@ -22,7 +22,7 @@ services:
         value: "backdoor_models"
       - key: DROPBOX_API_KEY
         value: ""  # Add this key manually through Render dashboard
-        sync: true  # This should be set through the Render dashboard
+        sync: false  # This should be set through the Render dashboard
       - key: NLTK_DATA
         value: "/opt/render/project/nltk_data"
       - key: GUNICORN_WORKERS
