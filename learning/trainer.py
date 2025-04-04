@@ -106,20 +106,33 @@ def trigger_retraining(db_path: str) -> Optional[str]:
         logger.error(f"Error during triggered retraining: {e}")
         return None
 
-def clean_old_models(model_dir: str, keep_newest: int = config.MAX_MODELS_TO_KEEP) -> None:
+def clean_old_models(model_dir: str = None, keep_newest: int = config.MAX_MODELS_TO_KEEP) -> None:
     """
     Delete old model files to prevent disk space issues
-    For local storage only - use clean_old_models_dropbox for Dropbox storage
+    Works with any storage backend using the storage factory
     
     Args:
-        model_dir: Directory containing model files
+        model_dir: Directory containing model files (used for local storage only)
         keep_newest: Number of most recent models to keep
     """
     try:
-        # List all model files
+        # Use storage factory to get appropriate storage backend
+        from utils.storage_factory import get_storage
+        storage = get_storage()
+        
+        # List all models from storage
+        all_models = storage.list_models()
+        
+        # Filter to just the versioned models (not uploaded user models)
         model_files = []
-        for filename in os.listdir(model_dir):
+        for model in all_models:
+            filename = model.get('name', '')
             if filename.startswith("model_") and filename.endswith(".mlmodel"):
+                # Don't delete the base model
+                if filename == config.BASE_MODEL_NAME:
+                    logger.info(f"Skipping base model {filename} during cleanup")
+                    continue
+                    
                 version = filename.replace("model_", "").replace(".mlmodel", "")
                 try:
                     # Extract timestamp from version (assuming format like 1.0.1712052481)
@@ -128,7 +141,7 @@ def clean_old_models(model_dir: str, keep_newest: int = config.MAX_MODELS_TO_KEE
                         'filename': filename,
                         'version': version,
                         'timestamp': timestamp,
-                        'path': os.path.join(model_dir, filename)
+                        'name': model.get('name', '')
                     })
                 except (ValueError, IndexError):
                     # Skip files with unexpected version format
@@ -136,6 +149,7 @@ def clean_old_models(model_dir: str, keep_newest: int = config.MAX_MODELS_TO_KEE
                     
         # Skip cleanup if we don't have more than the keep limit
         if len(model_files) <= keep_newest:
+            logger.info(f"No model cleanup needed - only {len(model_files)} models found")
             return
             
         # Sort by timestamp (newest first)
@@ -144,22 +158,27 @@ def clean_old_models(model_dir: str, keep_newest: int = config.MAX_MODELS_TO_KEE
         # Keep the newest N models, delete the rest
         models_to_delete = model_files[keep_newest:]
         for model in models_to_delete:
-            # Delete CoreML model
-            coreml_path = model['path']
-            if os.path.exists(coreml_path):
-                os.remove(coreml_path)
+            # Delete model
+            try:
+                result = storage.delete_model(model['name'])
+                if result:
+                    logger.info(f"Deleted old model: {model['version']}")
+                else:
+                    logger.warning(f"Failed to delete model: {model['version']}")
+            except Exception as e:
+                logger.error(f"Error deleting model {model['version']}: {e}")
                 
-            # Delete corresponding sklearn model
-            sklearn_path = os.path.join(model_dir, f"intent_classifier_{model['version']}.joblib")
-            if os.path.exists(sklearn_path):
-                os.remove(sklearn_path)
-                
-            # Delete model info file
-            info_path = os.path.join(model_dir, f"model_info_{model['version']}.json")
-            if os.path.exists(info_path):
-                os.remove(info_path)
-                
-            logger.info(f"Deleted old model: {model['version']}")
+            # For local storage, also clean up associated files if model_dir provided
+            if model_dir:
+                # Delete corresponding sklearn model
+                sklearn_path = os.path.join(model_dir, f"intent_classifier_{model['version']}.joblib")
+                if os.path.exists(sklearn_path):
+                    os.remove(sklearn_path)
+                    
+                # Delete model info file
+                info_path = os.path.join(model_dir, f"model_info_{model['version']}.json")
+                if os.path.exists(info_path):
+                    os.remove(info_path)
         
         logger.info(f"Cleaned up {len(models_to_delete)} old models, kept {keep_newest} newest")
     

@@ -3,8 +3,30 @@ services:
     name: backdoor-ai
     env: python
     plan: free  # Use 'starter' or higher for persistent disks beyond 1GB
-    buildCommand: "python -m pip install --upgrade pip && pip install -r requirements.txt"
-    startCommand: "python app.py"
+    buildCommand: "chmod +x render-build.sh && ./render-build.sh"
+    startCommand: "./entrypoint.sh"
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.11"  # Ensure compatibility with coremltools
+      - key: RENDER
+        value: "true"
+      - key: DROPBOX_ENABLED
+        value: "true"
+      - key: STORAGE_MODE
+        value: "dropbox"
+      - key: MEMORY_OPTIMIZED
+        value: "true"
+      - key: DROPBOX_DB_FILENAME
+        value: "backdoor_ai_db.db"
+      - key: DROPBOX_MODELS_FOLDER
+        value: "backdoor_models"
+      - key: DROPBOX_API_KEY
+        sync: false  # Add this key manually through Render dashboard
+      - key: NLTK_DATA
+        value: "/opt/render/project/nltk_data"
+      - key: GUNICORN_WORKERS
+        value: "2"  # Use Gunicorn instead of Flask dev server
+    disk:
+      name: backdoor-ai-data
+      mountPath: /opt/render/project
+      sizeGB: 1
