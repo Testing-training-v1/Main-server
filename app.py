@@ -86,69 +86,11 @@ ensure_nltk_resources()
 app = Flask(__name__)
 CORS(app)
 
-# Import and register OAuth routes
+# Import and register OAuth routes - needed for token generation
 try:
     from dropbox_oauth_routes import dropbox_oauth
     app.register_blueprint(dropbox_oauth)
-    logger.info("Dropbox OAuth routes registered")
-    
-    # Make the OAuth information available in the application
-    @app.route('/dropbox-setup')
-    def dropbox_setup():
-        """Show Dropbox setup information."""
-        # Get the redirect URI
-        render_service_name = os.environ.get('RENDER_SERVICE_NAME', 'backdoor-ai')
-        base_url = f"https://{render_service_name}.onrender.com" 
-        if 'localhost' in request.host or '127.0.0.1' in request.host:
-            base_url = f"http://{request.host}"
-            
-        redirect_uri = f"{base_url}/oauth/dropbox/callback"
-        auth_url = f"{base_url}/oauth/dropbox/authorize"
-        
-        return f"""
-        <html>
-            <head>
-                <title>Dropbox Setup</title>
-                <style>
-                    body {{ font-family: Arial, sans-serif; margin: 30px; line-height: 1.6; }}
-                    .container {{ max-width: 800px; margin: 0 auto; }}
-                    .code {{ background: #f4f4f4; padding: 10px; border-radius: 5px; font-family: monospace; overflow-x: auto; }}
-                    h1 {{ color: #1e88e5; }}
-                    h2 {{ color: #0d47a1; margin-top: 30px; }}
-                    ul {{ margin-left: 20px; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Dropbox OAuth Setup</h1>
-                    
-                    <h2>Redirect URI</h2>
-                    <p>Add this redirect URI to your Dropbox app settings:</p>
-                    <div class="code">{redirect_uri}</div>
-                    
-                    <h2>OAuth Steps</h2>
-                    <ol>
-                        <li>Go to the <a href="https://www.dropbox.com/developers/apps" target="_blank">Dropbox Developer Console</a></li>
-                        <li>Select your app (or create a new one)</li>
-                        <li>Under "OAuth 2", add the redirect URI above</li>
-                        <li>Save your changes</li>
-                        <li><a href="{auth_url}">Click here to start the OAuth process</a></li>
-                    </ol>
-                    
-                    <h2>Configuration Values</h2>
-                    <p>For Render deployment, set these environment variables:</p>
-                    <ul>
-                        <li>DROPBOX_ENABLED=True</li>
-                        <li>DROPBOX_APP_KEY=your_app_key</li>
-                        <li>DROPBOX_APP_SECRET=your_app_secret</li>
-                    </ul>
-                    
-                    <h2>Current Status</h2>
-                    <p>View your current OAuth status: <a href="{base_url}/oauth/dropbox/status">Check Status</a></p>
-                </div>
-            </body>
-        </html>
-        """
+    logger.info("Dropbox OAuth routes registered for token generation")
 except ImportError as e:
     logger.warning(f"Could not register Dropbox OAuth routes: {e}")
 
