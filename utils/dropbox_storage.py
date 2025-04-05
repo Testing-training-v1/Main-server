@@ -115,8 +115,49 @@ class DropboxStorage:
             dropbox.Dropbox: Authenticated instance or None
         """
         try:
-            # Initialize Dropbox client with just the access token
-            dbx = dropbox.Dropbox(self.access_token)
+            # Run the external refresh script first to ensure we have valid tokens
+            try:
+                logger.info("Running refresh_token.py to ensure valid tokens")
+                # Check if refresh_token.py exists
+                if os.path.exists("refresh_token.py"):
+                    import subprocess
+                    result = subprocess.run(
+                        [sys.executable, "refresh_token.py"], 
+                        capture_output=True, 
+                        text=True
+                    )
+                    logger.info(f"refresh_token.py exit code: {result.returncode}")
+                    logger.info(f"refresh_token.py output: {result.stdout}")
+                    
+                    # Try to reload tokens from file
+                    try:
+                        token_path = os.path.join(os.getcwd(), "dropbox_tokens.json")
+                        if os.path.exists(token_path):
+                            with open(token_path, "r") as f:
+                                tokens = json.load(f)
+                            if "access_token" in tokens:
+                                self.access_token = tokens["access_token"]
+                                logger.info("Updated access token from refresh script")
+                                if "refresh_token" in tokens:
+                                    self.refresh_token = tokens["refresh_token"]
+                                    logger.info("Updated refresh token from refresh script")
+                    except Exception as e:
+                        logger.warning(f"Error loading tokens after refresh: {e}")
+            except Exception as e:
+                logger.warning(f"Error running refresh script: {e}")
+            
+            # Initialize Dropbox client with access token and app credentials
+            if self.app_key and self.app_secret:
+                logger.info("Creating Dropbox client with full OAuth2 credentials")
+                dbx = dropbox.Dropbox(
+                    oauth2_access_token=self.access_token,
+                    app_key=self.app_key,
+                    app_secret=self.app_secret
+                )
+            else:
+                logger.info("Creating Dropbox client with access token only")
+                dbx = dropbox.Dropbox(self.access_token)
+                
             # Verify the token works
             dbx.users_get_current_account()
             logger.info("Successfully authenticated with Dropbox using access token")
@@ -149,7 +190,16 @@ class DropboxStorage:
             # First try the access token
             if self.access_token:
                 try:
-                    dbx = dropbox.Dropbox(self.access_token)
+                    # Create with both app_key and app_secret for proper OAuth support
+                    if self.app_key and self.app_secret:
+                        dbx = dropbox.Dropbox(
+                            oauth2_access_token=self.access_token,
+                            app_key=self.app_key,
+                            app_secret=self.app_secret
+                        )
+                    else:
+                        dbx = dropbox.Dropbox(self.access_token)
+                        
                     # Quick check of token validity
                     dbx.users_get_current_account()
                     logger.info("Successfully authenticated with existing access token")
@@ -162,6 +212,36 @@ class DropboxStorage:
                         logger.warning(f"Access token error: {ae}")
                 except Exception as e:
                     logger.warning(f"Error checking access token: {e}")
+            
+            # Also try loading from token file if we can't use our access token
+            try:
+                token_path = os.path.join(os.getcwd(), "dropbox_tokens.json")
+                if os.path.exists(token_path):
+                    with open(token_path, "r") as f:
+                        tokens = json.load(f)
+                    if "access_token" in tokens:
+                        logger.info("Found access token in dropbox_tokens.json")
+                        token = tokens["access_token"]
+                        # Try to authenticate with this token
+                        try:
+                            if self.app_key and self.app_secret:
+                                dbx = dropbox.Dropbox(
+                                    oauth2_access_token=token,
+                                    app_key=self.app_key,
+                                    app_secret=self.app_secret
+                                )
+                            else:
+                                dbx = dropbox.Dropbox(token)
+                            # Test it
+                            dbx.users_get_current_account()
+                            logger.info("Successfully authenticated with token from file")
+                            self.access_token = token
+                            return dbx
+                        except Exception:
+                            # Token from file didn't work, continue to refresh
+                            pass
+            except Exception as e:
+                logger.warning(f"Error checking token file: {e}")
             
             # If we got here, we need to refresh the token
             return self._refresh_access_token()
@@ -189,10 +269,6 @@ class DropboxStorage:
             logger.info("Refreshing Dropbox access token")
             self.last_token_refresh = current_time
             
-            # Create a new OAuth2 app and flow
-            app = dropbox.oauth.AppInfo(self.app_key, self.app_secret)
-            flow = dropbox.oauth.OAuth2FlowNoRedirect(app, "https://api.dropboxapi.com/oauth2/token", token_access_type="offline")
-            
             # Get a new access token using the refresh token
             import requests
             token_url = "https://api.dropboxapi.com/oauth2/token"
@@ -203,6 +279,7 @@ class DropboxStorage:
                 "client_secret": self.app_secret
             }
             
+            logger.info(f"Requesting new token with client_id={self.app_key}")
             response = requests.post(token_url, data=data)
             if response.status_code == 200:
                 token_data = response.json()
@@ -210,6 +287,32 @@ class DropboxStorage:
                 
                 # Update token in environment for future runs
                 os.environ["DROPBOX_ACCESS_TOKEN"] = self.access_token
+                
+                # Save the token to file for persistence
+                try:
+                    # Calculate expiry time
+                    if "expires_in" in token_data:
+                        expires_in = token_data["expires_in"]
+                        expiry_time = datetime.now() + timedelta(seconds=expires_in)
+                        expiry_iso = expiry_time.isoformat()
+                    else:
+                        # Default to 4 hours if not specified
+                        expiry_time = datetime.now() + timedelta(hours=4)
+                        expiry_iso = expiry_time.isoformat()
+                        
+                    # Create tokens dict
+                    tokens = {
+                        "access_token": self.access_token,
+                        "refresh_token": self.refresh_token,
+                        "expiry_time": expiry_iso
+                    }
+                    
+                    # Save to file
+                    with open("dropbox_tokens.json", "w") as f:
+                        json.dump(tokens, f, indent=2)
+                    logger.info("Saved refreshed tokens to dropbox_tokens.json")
+                except Exception as e:
+                    logger.warning(f"Could not save tokens to file: {e}")
                 
                 # Save to config if possible
                 try:
