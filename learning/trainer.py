@@ -187,7 +187,7 @@ def clean_old_models(model_dir: str = None, keep_newest: int = config.MAX_MODELS
 
 def prepare_training_data(db_path: str) -> Optional[pd.DataFrame]:
     """
-    Load and prepare data for model training
+    Load and prepare data for model training from both database and Dropbox user_data
     
     Args:
         db_path: Path to the SQLite database
@@ -196,7 +196,7 @@ def prepare_training_data(db_path: str) -> Optional[pd.DataFrame]:
         DataFrame with prepared training data or None if data is insufficient
     """
     try:
-        # Load interactions with feedback
+        # Load interactions with feedback from database
         conn = sqlite3.connect(db_path)
         query = """
             SELECT i.*, f.rating, f.comment 
@@ -206,8 +206,44 @@ def prepare_training_data(db_path: str) -> Optional[pd.DataFrame]:
         df = pd.read_sql_query(query, conn)
         conn.close()
         
-        logger.info(f"Loaded {len(df)} interactions for training")
+        logger.info(f"Loaded {len(df)} interactions from database")
         
+        # If Dropbox is enabled, also load interactions from user_data folder
+        if config.DROPBOX_ENABLED:
+            try:
+                from utils.dropbox_user_data import load_user_data_for_training
+                
+                # Load interactions from Dropbox
+                dropbox_interactions = load_user_data_for_training()
+                
+                if dropbox_interactions:
+                    logger.info(f"Loaded {len(dropbox_interactions)} additional interactions from Dropbox user_data")
+                    
+                    # Convert interactions to DataFrame
+                    dropbox_df = pd.DataFrame(dropbox_interactions)
+                    
+                    # Make sure required columns exist
+                    required_columns = ['id', 'device_id', 'timestamp', 'user_message', 'ai_response', 
+                                       'detected_intent', 'confidence_score', 'model_version']
+                    
+                    # Check if we have all required columns
+                    if all(col in dropbox_df.columns for col in required_columns):
+                        # Add feedback columns with default values
+                        if 'rating' not in dropbox_df.columns:
+                            dropbox_df['rating'] = None
+                        if 'comment' not in dropbox_df.columns:
+                            dropbox_df['comment'] = None
+                            
+                        # Combine with main DataFrame
+                        df = pd.concat([df, dropbox_df], ignore_index=True).drop_duplicates(subset=['id'])
+                        logger.info(f"Combined data has {len(df)} total interactions")
+                    else:
+                        missing_cols = [col for col in required_columns if col not in dropbox_df.columns]
+                        logger.warning(f"Dropbox data missing required columns: {missing_cols}")
+            except Exception as e:
+                logger.error(f"Error loading user data from Dropbox: {e}")
+        
+        # Check if we have enough data
         if len(df) < config.MIN_TRAINING_DATA:
             logger.warning(f"Not enough data for training. Need at least {config.MIN_TRAINING_DATA} interactions.")
             return None
