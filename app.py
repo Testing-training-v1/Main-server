@@ -76,7 +76,8 @@ else:
     nltk.data.path.append(temp_nltk_dir)
     logger.info(f"Using local temporary directory for NLTK data: {temp_nltk_dir}")
 
-logger.info("Operating in memory-only mode with Dropbox storage - no local directories needed")
+if config.DROPBOX_ENABLED:
+    logger.info("Operating in memory-only mode with Dropbox storage - no local directories needed")
 
 # Ensure NLTK resources are available
 ensure_nltk_resources()
@@ -101,17 +102,22 @@ except Exception as e:
     logger.error(f"Failed to initialize storage system: {e}")
     logger.warning("Will attempt to use local storage directly")
 
-# Initialize database on startup - uses memory DB with Dropbox when enabled
+# Initialize database - use in-memory DB with Dropbox sync when enabled
 if config.DROPBOX_ENABLED:
-    logger.info("Initializing in-memory database with Dropbox synchronization")
+    logger.info("Using Dropbox for storage - initializing in-memory database")
     try:
         from utils.memory_db import init_memory_db
         mem_db = init_memory_db()  # Initialize shared in-memory DB
         logger.info("In-memory database initialized successfully")
+    except ImportError as ie:
+        logger.error(f"Could not import memory_db module: {ie}")
+        logger.warning("This is a critical error for Dropbox mode")
     except Exception as e:
         logger.error(f"Error initializing memory database: {e}")
+        logger.warning("Will attempt to continue with database initialization")
 
 # Initialize database schema (in-memory or file-based depending on config)
+logger.info("Initializing database schema")
 init_db(config.DB_PATH)
 
 import os

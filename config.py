@@ -17,6 +17,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Define storage mode and Dropbox settings first to avoid NameError
+# Storage mode configuration
+STORAGE_MODE = os.getenv("STORAGE_MODE", "dropbox")
+
+# Dropbox Integration Settings - DEFINED EARLY to avoid NameError
+DROPBOX_ENABLED = os.getenv("DROPBOX_ENABLED", "True").lower() in ["true", "1", "yes"]
+# The API key is hardcoded here as requested to ensure it's always available
+DROPBOX_API_KEY = os.getenv("DROPBOX_API_KEY", "sl.u.AFpjxIfGDWdCGwYCSTvEt1YB8hmlxHixh0P_Myj6eoz7BLFiAPVeFTqomrRC5hvteZrqFjqFhFj65JmRN0nQTiTafi-BY_hNWfwPs9u-wtBcY05yKFnvx1d47QLA7hrepXlIoHQKZ4T6xxaXfgYZLnI1dtDoYrQ1mhPjP93uC91rMfIp5tg6qEvmM2uFs85qap1kHsJ7OX7gaVN_p_BF5ADL2y0e4JbMToXJB2GTinqBlpr8E1D3TFP2GHRJ6iq7aRs3mVSh9NvaR2Qw4uFlR-FkBwCsFXOmqwxPw7J9uK4malLF75yS_TdDFZdH3567x8VB8l_pN801lZ9c29kgPkmLfpIW_5uFcmlzKpJDBAIhawGE4MoD1AuuR68iAWM0e_tfub-6HcCI9xJPKrnm-TdsXcVxp9GISKf-QPdo6PXseDMw_naMQpC8_VLdmty8fYMepFl5g1v7WX3ofA2vxvZZbTZCe2SindqcqJyAMSYFClrdJx4GiUc_Ay9qwtRYFdoOd5uB56sPxSc2SAT1nk07EhdRk92r2U4QQHdeDaafzHnKXevUWARzrr00Nz72cRuxC3h39SBjpE45pryrN47jVdxSOFHryCeq0pgVfLk4TaaKnxx2rL82gRztJxxIMHykQ3Otsg60lDNN2eR-hT-kbatNAgEJlUEeXAxCyBYTp_cErCeA1hOcYGnYTc14AuZ6cqO0iLsxvocgJIl1a-Cvod_ENuX5d739t-dVwQkqD0ZdKeFKecR5R36gymF4ZpGHczxxbXtSeeg_sNFYKFXVqnkJQBEv1aez02OK6L8vi4C7krNbDrf6759sdsglq4ryDhGh_dFEAr2aH2KYDl9qRV4jbjwJwGf752Q3huYeuoTSJOdG0ychi4O0VEVHTj-9DnviPNHmma0bOz7XgmB6BGpjeLWD7hG6aEAjPaXS5jL3qokCBKqBDAhOjZiQHhVkiRegKEmWzRm11zHgjlzo1JDMsP5Q5mj7T9lEhHdmX9Q6Pl7_DAPA4kFs7wJkawPi3mbpY2b2U3B84r443_NNRcIddMvNEMIdE0jS_1cG3RVyqomULZt2M9Z-Ti0IeaiQRcdc5yrCFi0GDVNDtxC1CdG26Y5FCyQPcEOCGrzOghfptu55Ed_uWOTkaV9qlxvPBOfnwqpccUqM4ZNnNw8XQ6MdT76aD6_yQdI5mTmJjllMuaaZonGlMKZhPCSM0KCdIgN6mxSatb-v0Of9tcjcaxcO_RxtkpXWan-10qCqNWBv0yp0Jst10TqpzVyFGzSd10cON3WLV_eypNZ6sjkgqZjmmvmyKcCEg9c5Tjth7BsZlC1KMHFXl6N4ui9jHOn-l3NByaVoq6NaKelSVxM2kkkxKNl5LAzGBMLjleXVRZ12SblDIdtQTPgccAA27jtb5Z4Srfx2QsGvvGQEIgnOfWEcXylXzYjbw34rFAeSmpb6A1b2GDcB4keHBLuNcs0")
+DROPBOX_DB_FILENAME = os.getenv("DROPBOX_DB_FILENAME", "backdoor_ai_db.db")
+DROPBOX_MODELS_FOLDER = os.getenv("DROPBOX_MODELS_FOLDER", "backdoor_models")
+
+# Check for necessary credentials early
+if DROPBOX_ENABLED and not DROPBOX_API_KEY:
+    logger.warning("Dropbox is enabled but no API key available.")
+    DROPBOX_ENABLED = False
+else:
+    # Log that we're using the hardcoded API key
+    logger.info("Using hardcoded Dropbox API key for authentication")
+
 # Determine deployment environment
 IS_RENDER = os.getenv("RENDER", "").lower() in ["true", "1", "yes"]
 IS_KOYEB = os.getenv("KOYEB_DEPLOYMENT", "").lower() in ["true", "1", "yes"]
@@ -71,12 +90,13 @@ logger.info(f"Using NLTK_DATA_PATH: {NLTK_DATA_PATH}")
 # Server settings
 PORT = int(os.getenv("PORT", 10000))
 
-# Storage paths configuration
-UPLOADED_MODELS_DIR = os.path.join(MODEL_DIR, "uploaded")
-
-# For Dropbox-only mode, don't create local directories and use in-memory storage
+# Handle storage setup based on DROPBOX_ENABLED flag
 if DROPBOX_ENABLED:
     logger.info("Using Dropbox for all storage - no local directories needed")
+    
+    # Define a temporary directory for any possible cases where a file path is required
+    # But we won't actually create any directories here
+    UPLOADED_MODELS_DIR = os.path.join("/tmp", "upload_models_refs")
     
     # Define in-memory database path (this is just a reference for compatibility)
     DB_PATH = "memory:interactions.db"
@@ -86,11 +106,14 @@ if DROPBOX_ENABLED:
     DROPBOX_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/models"
     DROPBOX_UPLOADED_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/uploaded"
     
-    # No need to create local directories - everything uses memory with Dropbox sync
+    # Skip directory creation - everything uses memory with Dropbox sync
     logger.info("All data will be stored in Dropbox and accessed via memory buffers")
 else:
     # Only create directories when not using Dropbox
     logger.info("Using local storage - creating local directories")
+    
+    # Define local file paths
+    UPLOADED_MODELS_DIR = os.path.join(MODEL_DIR, "uploaded")
     
     # Ensure directories exist with error handling
     for directory in [DATA_DIR, MODEL_DIR, NLTK_DATA_PATH, UPLOADED_MODELS_DIR]:
@@ -146,14 +169,7 @@ MODEL_VERSION_PREFIX = os.getenv("MODEL_VERSION_PREFIX", "1.0.")
 # Storage mode configuration
 STORAGE_MODE = os.getenv("STORAGE_MODE", "dropbox")
 
-# Dropbox Integration Settings
-DROPBOX_ENABLED = os.getenv("DROPBOX_ENABLED", "True").lower() in ["true", "1", "yes"]
-# The API key is hardcoded here as requested to ensure it's always available
-DROPBOX_API_KEY = os.getenv("DROPBOX_API_KEY", "sl.u.AFpjxIfGDWdCGwYCSTvEt1YB8hmlxHixh0P_Myj6eoz7BLFiAPVeFTqomrRC5hvteZrqFjqFhFj65JmRN0nQTiTafi-BY_hNWfwPs9u-wtBcY05yKFnvx1d47QLA7hrepXlIoHQKZ4T6xxaXfgYZLnI1dtDoYrQ1mhPjP93uC91rMfIp5tg6qEvmM2uFs85qap1kHsJ7OX7gaVN_p_BF5ADL2y0e4JbMToXJB2GTinqBlpr8E1D3TFP2GHRJ6iq7aRs3mVSh9NvaR2Qw4uFlR-FkBwCsFXOmqwxPw7J9uK4malLF75yS_TdDFZdH3567x8VB8l_pN801lZ9c29kgPkmLfpIW_5uFcmlzKpJDBAIhawGE4MoD1AuuR68iAWM0e_tfub-6HcCI9xJPKrnm-TdsXcVxp9GISKf-QPdo6PXseDMw_naMQpC8_VLdmty8fYMepFl5g1v7WX3ofA2vxvZZbTZCe2SindqcqJyAMSYFClrdJx4GiUc_Ay9qwtRYFdoOd5uB56sPxSc2SAT1nk07EhdRk92r2U4QQHdeDaafzHnKXevUWARzrr00Nz72cRuxC3h39SBjpE45pryrN47jVdxSOFHryCeq0pgVfLk4TaaKnxx2rL82gRztJxxIMHykQ3Otsg60lDNN2eR-hT-kbatNAgEJlUEeXAxCyBYTp_cErCeA1hOcYGnYTc14AuZ6cqO0iLsxvocgJIl1a-Cvod_ENuX5d739t-dVwQkqD0ZdKeFKecR5R36gymF4ZpGHczxxbXtSeeg_sNFYKFXVqnkJQBEv1aez02OK6L8vi4C7krNbDrf6759sdsglq4ryDhGh_dFEAr2aH2KYDl9qRV4jbjwJwGf752Q3huYeuoTSJOdG0ychi4O0VEVHTj-9DnviPNHmma0bOz7XgmB6BGpjeLWD7hG6aEAjPaXS5jL3qokCBKqBDAhOjZiQHhVkiRegKEmWzRm11zHgjlzo1JDMsP5Q5mj7T9lEhHdmX9Q6Pl7_DAPA4kFs7wJkawPi3mbpY2b2U3B84r443_NNRcIddMvNEMIdE0jS_1cG3RVyqomULZt2M9Z-Ti0IeaiQRcdc5yrCFi0GDVNDtxC1CdG26Y5FCyQPcEOCGrzOghfptu55Ed_uWOTkaV9qlxvPBOfnwqpccUqM4ZNnNw8XQ6MdT76aD6_yQdI5mTmJjllMuaaZonGlMKZhPCSM0KCdIgN6mxSatb-v0Of9tcjcaxcO_RxtkpXWan-10qCqNWBv0yp0Jst10TqpzVyFGzSd10cON3WLV_eypNZ6sjkgqZjmmvmyKcCEg9c5Tjth7BsZlC1KMHFXl6N4ui9jHOn-l3NByaVoq6NaKelSVxM2kkkxKNl5LAzGBMLjleXVRZ12SblDIdtQTPgccAA27jtb5Z4Srfx2QsGvvGQEIgnOfWEcXylXzYjbw34rFAeSmpb6A1b2GDcB4keHBLuNcs0")
-DROPBOX_DB_FILENAME = os.getenv("DROPBOX_DB_FILENAME", "backdoor_ai_db.db")
-DROPBOX_MODELS_FOLDER = os.getenv("DROPBOX_MODELS_FOLDER", "backdoor_models")
-
-# Dropbox Sync Settings
+# Dropbox Sync Settings (already defined DROPBOX_ENABLED and related settings at the top)
 DROPBOX_DB_SYNC_INTERVAL = int(os.getenv("DROPBOX_DB_SYNC_INTERVAL", "60"))  # Seconds
 DROPBOX_MODELS_SYNC_INTERVAL = int(os.getenv("DROPBOX_MODELS_SYNC_INTERVAL", "300"))  # Seconds
 
@@ -175,14 +191,8 @@ CONCURRENT_TRAINING_ENABLED = os.getenv("CONCURRENT_TRAINING_ENABLED", "True").l
 # Temporary directory for processing
 TMP_DIR = tempfile.gettempdir()
 
-# Check for necessary credentials
-# API key is now hardcoded but we'll keep this check for robustness
-if DROPBOX_ENABLED and not DROPBOX_API_KEY:
-    logger.warning("Dropbox is enabled but no API key available.")
-    DROPBOX_ENABLED = False
-else:
-    # Log that we're using the hardcoded API key
-    logger.info("Using hardcoded Dropbox API key for authentication")
+# Credentials check for Google Drive only (Dropbox checked earlier)
+# No need to check Dropbox again here as we already did it at the top of the file
 
 if GOOGLE_DRIVE_ENABLED and not os.path.exists(GOOGLE_CREDENTIALS_PATH):
     logger.warning(f"Google Drive is enabled but credentials file not found at {GOOGLE_CREDENTIALS_PATH}")
