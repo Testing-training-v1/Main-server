@@ -53,6 +53,6 @@ fi
 
 # Generate initial tokens if possible
 echo "Running initial Dropbox token refresh..."
-./refresh_dropbox_token.sh || echo "Initial token refresh skipped or failed"
+python ./refresh_token.py || echo "Initial token refresh skipped or failed"
 
 echo "Build completed successfully"

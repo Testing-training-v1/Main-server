@@ -60,12 +60,16 @@ echo "Verifying scikit-learn installation..."
 python -c "import sklearn; print(f'scikit-learn version: {sklearn.__version__}')"
 
 # Refresh Dropbox tokens before starting the application
-if [ -f "./refresh_dropbox_token.sh" ]; then
-    echo "Running Dropbox token refresh..."
+echo "Running Dropbox token refresh..."
+if [ -f "./refresh_token.py" ]; then
+    # Try the standalone Python script first
+    python ./refresh_token.py || echo "Python token refresh failed, continuing anyway"
+elif [ -f "./refresh_dropbox_token.sh" ]; then
+    # Fall back to shell script if Python script not found
     chmod +x ./refresh_dropbox_token.sh
-    ./refresh_dropbox_token.sh || echo "Token refresh failed, continuing anyway"
+    ./refresh_dropbox_token.sh || echo "Shell token refresh failed, continuing anyway"
 else
-    echo "Dropbox token refresh script not found, skipping"
+    echo "Token refresh scripts not found, skipping"
 fi
 
 # Display summary of environment
