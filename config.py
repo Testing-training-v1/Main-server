@@ -64,8 +64,9 @@ if DROPBOX_ENABLED:
 # Determine deployment environment
 IS_RENDER = os.getenv("RENDER", "").lower() in ["true", "1", "yes"]
 IS_KOYEB = os.getenv("KOYEB_DEPLOYMENT", "").lower() in ["true", "1", "yes"]
+IS_CIRCLECI = os.getenv("CIRCLECI", "").lower() in ["true", "1", "yes"] or os.getenv("CIRCLECI_ENV", "").lower() in ["true", "1", "yes"]
 
-# Memory-only mode for Render deployment
+# Memory-only mode for cloud deployments
 MEMORY_ONLY_MODE = os.getenv("MEMORY_ONLY_MODE", "False").lower() in ["true", "1", "yes"]
 USE_DROPBOX_STREAMING = os.getenv("USE_DROPBOX_STREAMING", "False").lower() in ["true", "1", "yes"]
 NO_LOCAL_STORAGE = os.getenv("NO_LOCAL_STORAGE", "False").lower() in ["true", "1", "yes"]
@@ -76,6 +77,13 @@ if IS_RENDER and not os.environ.get("DISABLE_MEMORY_ONLY_MODE"):
     USE_DROPBOX_STREAMING = True
     NO_LOCAL_STORAGE = True
     logger.info("Memory-only mode automatically enabled for Render deployment")
+    
+# If we're running on CircleCI, enable memory-only mode by default
+elif IS_CIRCLECI and not os.environ.get("DISABLE_MEMORY_ONLY_MODE"):
+    MEMORY_ONLY_MODE = True
+    USE_DROPBOX_STREAMING = True
+    NO_LOCAL_STORAGE = True
+    logger.info("Memory-only mode automatically enabled for CircleCI environment")
 
 # Use environment variables if set, otherwise use platform-specific defaults
 DATA_DIR = os.getenv("DATA_DIR", None)

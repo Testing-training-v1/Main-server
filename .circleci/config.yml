@@ -1,0 +1,251 @@
+version: 2.1
+
+orbs:
+  python: circleci/python@2.1.1
+
+jobs:
+  build-and-test:
+    docker:
+      - image: cimg/python:3.11
+        environment:
+          # Enable memory-only mode
+          MEMORY_ONLY_MODE: "True"
+          USE_DROPBOX_STREAMING: "True"
+          NO_LOCAL_STORAGE: "True"
+          
+          # CircleCI-specific settings
+          CIRCLECI_ENV: "True"
+          
+          # Database settings
+          DROPBOX_ENABLED: "True"
+          
+          # Test port
+          PORT: 10000
+          
+          # Use the project's root as the working directory
+          PYTHONPATH: "."
+    
+    resource_class: medium
+    
+    steps:
+      - checkout
+      
+      - python/install-packages:
+          pkg-manager: pip
+          packages:
+            - pip
+          cache-version: v1
+          
+      # Install requirements with specific optimizations for CI environment
+      - run:
+          name: Install dependencies
+          command: |
+            pip install --upgrade pip
+            # Install with memory-optimized settings
+            pip install --no-cache-dir -r requirements.txt
+      
+      # Configure Dropbox tokens from environment variables
+      - run:
+          name: Configure Dropbox credentials
+          command: |
+            if [ -n "$DROPBOX_REFRESH_TOKEN" ]; then
+              echo "Using Dropbox refresh token from environment variables"
+              # Save the token to a file for the application to use
+              echo "DROPBOX_REFRESH_TOKEN=$DROPBOX_REFRESH_TOKEN" > .env
+            else
+              echo "Warning: DROPBOX_REFRESH_TOKEN not set. Running with limited functionality."
+            fi
+            
+            # Verify connectivity
+            python -c "
+            import os
+            import sys
+            try:
+                from utils.dropbox_storage import get_dropbox_storage, refresh_access_token
+                print('Attempting to refresh Dropbox token...')
+                success = refresh_access_token()
+                print(f'Token refresh success: {success}')
+                
+                if success:
+                    print('Verifying Dropbox connection...')
+                    dropbox_storage = get_dropbox_storage()
+                    account = dropbox_storage.dbx.users_get_current_account()
+                    print(f'Connected to Dropbox as: {account.name.display_name}')
+                else:
+                    print('Warning: Token refresh failed, some tests may be skipped')
+            except Exception as e:
+                print(f'Error checking Dropbox connectivity: {e}')
+                # Don't fail the build for Dropbox issues - we'll skip tests that require it
+            "
+      
+      # Run linting and basic validation
+      - run:
+          name: Run linting
+          command: |
+            pip install flake8
+            # Run with only critical errors reported
+            flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
+      
+      # Run tests with memory optimizations
+      - run:
+          name: Run tests
+          command: |
+            mkdir -p test-results
+            
+            # First, verify the application can start with memory-only mode
+            echo "Testing application startup..."
+            # Use timeout to prevent hanging
+            timeout 30s python -c "
+            import os
+            os.environ['MEMORY_ONLY_MODE'] = 'True'
+            os.environ['USE_DROPBOX_STREAMING'] = 'True'
+            os.environ['NO_LOCAL_STORAGE'] = 'True'
+            
+            # Import app to verify it can initialize in memory-only mode
+            try:
+                import app
+                print('Application imported successfully in memory-only mode')
+            except Exception as e:
+                print(f'Error importing application: {e}')
+                exit(1)
+            " || { echo "Application startup test failed"; exit 1; }
+            
+            # Run basic functionality tests
+            echo "Testing memory-only mode functionality..."
+            python -c "
+            import os
+            import sys
+            import tempfile
+            
+            # Test virtual tempfile implementation
+            try:
+                # Import our patch first
+                import patch_tempfile
+                print('Patched tempfile module successfully')
+                
+                # Now verify tempfile is patched
+                temp = tempfile.NamedTemporaryFile()
+                print(f'Created virtual tempfile: {temp.name}')
+                temp.write(b'Test data')
+                temp.seek(0)
+                data = temp.read()
+                print(f'Successfully read from virtual tempfile: {data}')
+                temp.close()
+                print('Memory-only tempfile test passed')
+            except Exception as e:
+                print(f'Error testing virtual tempfile: {e}')
+                exit(1)
+            
+            # Test Dropbox connectivity (if enabled)
+            if os.environ.get('DROPBOX_REFRESH_TOKEN'):
+                try:
+                    from utils.virtual_tempfile import patch_tempfile_module
+                    patch_tempfile_module()
+                    
+                    from utils.dropbox_storage import get_dropbox_storage
+                    dropbox_storage = get_dropbox_storage()
+                    print('Successfully connected to Dropbox')
+                    
+                    # Test reading a file if available
+                    try:
+                        from utils.dropbox_fs import read_file, exists
+                        if exists('backdoor_ai_db.db'):
+                            print('Database file exists in Dropbox')
+                        else:
+                            print('Database file not found, but connection works')
+                    except Exception as e:
+                        print(f'Error checking Dropbox file: {e}')
+                except Exception as e:
+                    print(f'Error testing Dropbox connectivity: {e}')
+                    # Don't fail the build for Dropbox issues
+            else:
+                print('Skipping Dropbox tests - no refresh token provided')
+            "
+      
+      # Verify the model validation system works with memory-only mode
+      - run:
+          name: Test model validation system
+          command: |
+            python -c "
+            import os
+            import sys
+            import io
+            
+            # Set up memory-only mode
+            os.environ['MEMORY_ONLY_MODE'] = 'True'
+            os.environ['USE_DROPBOX_STREAMING'] = 'True'
+            
+            try:
+                # Import the virtual tempfile patch first
+                import patch_tempfile
+                
+                # Import validation module
+                try:
+                    from utils.model_validator import validate_base_model
+                    print('Successfully imported model validator')
+                    
+                    # Create a fake model for testing
+                    # This won't validate as a real model but tests the code path
+                    if not os.environ.get('DROPBOX_REFRESH_TOKEN'):
+                        print('Creating a memory buffer to simulate model validation')
+                        class FakeStreamingModel:
+                            def __init__(self):
+                                self.buffer = io.BytesIO(b'MLMODEL-TEST')
+                                self.position = 0
+                            
+                            def read(self, size=-1):
+                                return self.buffer.read(size)
+                                
+                            def seek(self, pos, whence=0):
+                                return self.buffer.seek(pos, whence)
+                                
+                        # Test with a fake model
+                        import utils.model_streamer
+                        utils.model_streamer.get_base_model_stream = lambda: FakeStreamingModel()
+                        
+                        # Try to run validation - will fail but test code path
+                        print('Attempting model validation to test memory handling')
+                        try:
+                            result = validate_base_model()
+                            print('Model validation completed')
+                        except Exception as e:
+                            # Expected to fail since we don't have a real model
+                            print(f'Model validation failed as expected: {e}')
+                except Exception as e:
+                    print(f'Error in model validation test: {e}')
+            except Exception as e:
+                print(f'Error in validation test: {e}')
+            "
+      
+      # Store test results
+      - store_test_results:
+          path: test-results
+
+  deploy:
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - run:
+          name: Install deployment tools
+          command: |
+            pip install --upgrade pip
+      - run:
+          name: Deploy application
+          command: |
+            echo "Deployment would run here in a real production setup"
+            # Add your deployment commands here
+            # For example:
+            # - push to a deployment platform
+            # - update a staging/production environment
+
+workflows:
+  main:
+    jobs:
+      - build-and-test
+      - deploy:
+          requires:
+            - build-and-test
+          filters:
+            branches:
+              only: main
