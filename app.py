@@ -86,6 +86,14 @@ ensure_nltk_resources()
 app = Flask(__name__)
 CORS(app)
 
+# Import and register OAuth routes
+try:
+    from dropbox_oauth_routes import dropbox_oauth
+    app.register_blueprint(dropbox_oauth)
+    logger.info("Dropbox OAuth routes registered")
+except ImportError as e:
+    logger.warning(f"Could not register Dropbox OAuth routes: {e}")
+
 # Initialize storage system
 try:
     # Import storage factory
