@@ -45,9 +45,53 @@ def get_base_model_buffer() -> Optional[io.BytesIO]:
             # Ensure we're looking in the correct folder
             model_name = config.BASE_MODEL_NAME
             
-            # Try to download directly to memory
-            logger.info(f"Downloading base model {model_name} from Dropbox to memory")
+            # First try using streaming download
+            try:
+                # Check for the stream function to get a streaming download URL
+                base_model_folder = getattr(config, 'DROPBOX_BASE_MODEL_FOLDER', 'base_model')
+                logger.info(f"Looking for base model in {base_model_folder} folder")
+                
+                # Try to get streaming URL
+                stream_info = dropbox_storage.get_model_stream(model_name)
+                
+                if stream_info and stream_info.get('success'):
+                    # Download using the URL
+                    import requests
+                    download_url = stream_info.get('download_url')
+                    logger.info(f"Downloading base model using streaming URL")
+                    
+                    response = requests.get(download_url, stream=True)
+                    if response.status_code == 200:
+                        # Create buffer and store in cache
+                        buffer = io.BytesIO()
+                        for chunk in response.iter_content(chunk_size=8192):
+                            buffer.write(chunk)
+                        
+                        # Reset buffer position
+                        buffer.seek(0)
+                        
+                        # Cache the buffer
+                        with _model_cache_lock:
+                            _model_cache['1.0.0'] = io.BytesIO(buffer.getvalue())
+                        
+                        logger.info(f"Successfully downloaded base model using streaming")
+                        return buffer
+                        
+                    logger.warning(f"Failed to download base model using streaming URL")
+            except Exception as e:
+                logger.warning(f"Error using model streaming for base model: {e}")
+            
+            # Fall back to direct download if streaming failed
+            logger.info(f"Trying to download base model directly to memory")
+            
+            # First try the default folder
             result = dropbox_storage.download_model_to_memory(model_name)
+            
+            # If not found, try the base_model folder
+            if not result or not result.get('success'):
+                logger.info(f"Base model not found in default folder, trying base_model folder")
+                base_model_folder = getattr(config, 'DROPBOX_BASE_MODEL_FOLDER', 'base_model')
+                result = dropbox_storage.download_model_to_memory(model_name, folder=base_model_folder)
             
             if result and result.get('success'):
                 # Get the buffer and cache it
@@ -135,8 +179,45 @@ def get_model_buffer(version: str) -> Optional[io.BytesIO]:
             # Construct model filename
             model_name = f"model_{version}.mlmodel"
             
+            # First try using streaming download
+            try:
+                # Try to get streaming URL
+                stream_info = dropbox_storage.get_model_stream(model_name)
+                
+                if stream_info and stream_info.get('success'):
+                    # Download using the URL
+                    import requests
+                    download_url = stream_info.get('download_url')
+                    logger.info(f"Downloading model {model_name} using streaming URL")
+                    
+                    response = requests.get(download_url, stream=True)
+                    if response.status_code == 200:
+                        # Create buffer and store in cache
+                        buffer = io.BytesIO()
+                        for chunk in response.iter_content(chunk_size=8192):
+                            buffer.write(chunk)
+                        
+                        # Reset buffer position
+                        buffer.seek(0)
+                        
+                        # Cache for future use if it's not too large (>50MB)
+                        buffer_size = len(buffer.getvalue())
+                        if buffer_size < 50 * 1024 * 1024:  # 50MB limit for cache
+                            with _model_cache_lock:
+                                _model_cache[version] = io.BytesIO(buffer.getvalue())
+                        else:
+                            logger.info(f"Model {version} too large ({buffer_size/1024/1024:.1f}MB) for memory cache")
+                        
+                        logger.info(f"Successfully downloaded model {version} using streaming")
+                        return buffer
+                        
+                    logger.warning(f"Failed to download model {version} using streaming URL")
+            except Exception as e:
+                logger.warning(f"Error using model streaming: {e}")
+            
+            # Fall back to direct download if streaming failed
             # Try to download directly to memory
-            logger.info(f"Downloading model {model_name} from Dropbox to memory")
+            logger.info(f"Falling back to direct download for model {model_name}")
             result = dropbox_storage.download_model_to_memory(model_name)
             
             if result and result.get('success'):

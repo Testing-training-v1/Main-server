@@ -724,6 +724,83 @@ class DropboxStorage:
                 logger.error(f"Error uploading model {model_name}: {e}")
                 return {'success': False, 'error': str(e)}
     
+    def get_model_stream(self, model_name: str, folder: str = None) -> Dict[str, Any]:
+        """
+        Get a streaming download URL for a model file in Dropbox.
+        
+        Args:
+            model_name: Name of the model file
+            folder: Optional specific folder to look in, defaults to models_folder_name
+            
+        Returns:
+            Dict with success, download_url, size, path fields
+        """
+        with self.lock:
+            # Sync model files if needed
+            current_time = time.time()
+            if current_time - self.last_models_sync > self.models_sync_interval:
+                self._sync_model_files()
+            
+            # Determine the folder to look in - including base_model folder
+            search_folder = folder if folder else self.models_folder_name
+            
+            # Check base_model folder if it's not found in regular folder
+            if not self.model_files.get(model_name):
+                # First try base_model folder for BASE_MODEL_NAME
+                try:
+                    import config
+                    if model_name == getattr(config, 'BASE_MODEL_NAME', 'model_1.0.0.mlmodel'):
+                        base_model_folder = getattr(config, 'DROPBOX_BASE_MODEL_FOLDER', 'base_model')
+                        logger.info(f"Looking for base model in {base_model_folder} folder")
+                        # Check if model exists in base_model folder
+                        try:
+                            base_model_path = f"/{base_model_folder}/{model_name}"
+                            self.dbx.files_get_metadata(base_model_path)
+                            # If we get here, the model exists in base_model folder
+                            self.model_files[model_name] = base_model_path
+                            logger.info(f"Found base model at {base_model_path}")
+                        except Exception as e:
+                            logger.warning(f"Base model not found in base_model folder: {e}")
+                except ImportError:
+                    pass
+            
+            # Find model path
+            dropbox_path = self.model_files.get(model_name)
+            if not dropbox_path:
+                # Try to find by constructing path
+                dropbox_path = f"/{search_folder}/{model_name}"
+                logger.info(f"Looking for model at {dropbox_path}")
+                try:
+                    self.dbx.files_get_metadata(dropbox_path)
+                    # If we get here, the model exists - add to cache
+                    self.model_files[model_name] = dropbox_path
+                except Exception:
+                    logger.warning(f"Model {model_name} not found at {dropbox_path}")
+                    return {'success': False, 'error': 'Model not found'}
+            
+            try:
+                # Create shared link for direct download
+                shared_link = self.dbx.sharing_create_shared_link_with_settings(dropbox_path)
+                
+                # Convert to direct download link
+                download_url = shared_link.url.replace('?dl=0', '?dl=1')
+                
+                # Get metadata
+                metadata = self.dbx.files_get_metadata(dropbox_path)
+                
+                logger.info(f"Created streaming download URL for {model_name}")
+                
+                return {
+                    'success': True,
+                    'download_url': download_url,
+                    'size': metadata.size,
+                    'path': dropbox_path
+                }
+                
+            except Exception as e:
+                logger.error(f"Error creating model stream for {model_name}: {e}")
+                return {'success': False, 'error': str(e)}
+    
     def download_model_to_memory(self, model_name: str, folder: str = None) -> Dict[str, Any]:
         """
         Download a model file from Dropbox to memory.
@@ -919,6 +996,11 @@ def init_dropbox_storage(api_key: str = None, db_filename: str = "interactions.d
     Returns:
         DropboxStorage: The initialized storage instance or None if initialization fails
     """
+    # Ensure tempfile is available
+    import sys
+    import tempfile
+    if 'tempfile' not in sys.modules:
+        sys.modules['tempfile'] = tempfile
     global _dropbox_storage
     
     # Use the centralized token manager to ensure we have valid tokens
