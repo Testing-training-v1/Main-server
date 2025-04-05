@@ -71,31 +71,49 @@ logger.info(f"Using NLTK_DATA_PATH: {NLTK_DATA_PATH}")
 # Server settings
 PORT = int(os.getenv("PORT", 10000))
 
-# Storage paths - ensure they exist with error handling
+# Storage paths configuration
 UPLOADED_MODELS_DIR = os.path.join(MODEL_DIR, "uploaded")
 
-# Ensure directories exist with error handling
-for directory in [DATA_DIR, MODEL_DIR, NLTK_DATA_PATH, UPLOADED_MODELS_DIR]:
-    try:
-        os.makedirs(directory, exist_ok=True)
-        logger.info(f"Created directory: {directory}")
-    except PermissionError:
-        logger.warning(f"Permission denied creating directory: {directory}")
-        # If this is a critical directory, we need to handle the error
-        if directory == DATA_DIR:
-            # Fallback to a temporary directory
-            DATA_DIR = tempfile.mkdtemp()
-            logger.info(f"Using temporary directory instead: {DATA_DIR}")
-        elif directory == MODEL_DIR:
-            MODEL_DIR = tempfile.mkdtemp()
-            UPLOADED_MODELS_DIR = os.path.join(MODEL_DIR, "uploaded")
-            os.makedirs(UPLOADED_MODELS_DIR, exist_ok=True)
-            logger.info(f"Using temporary directory instead: {MODEL_DIR}")
-    except Exception as e:
-        logger.error(f"Error creating directory {directory}: {e}")
+# For Dropbox-only mode, don't create local directories and use in-memory storage
+if DROPBOX_ENABLED:
+    logger.info("Using Dropbox for all storage - no local directories needed")
+    
+    # Define in-memory database path (this is just a reference for compatibility)
+    DB_PATH = "memory:interactions.db"
+    
+    # Define Dropbox paths to use for resources (these are only used as references)
+    DROPBOX_NLTK_FOLDER = "nltk_data"
+    DROPBOX_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/models"
+    DROPBOX_UPLOADED_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/uploaded"
+    
+    # No need to create local directories - everything uses memory with Dropbox sync
+    logger.info("All data will be stored in Dropbox and accessed via memory buffers")
+else:
+    # Only create directories when not using Dropbox
+    logger.info("Using local storage - creating local directories")
+    
+    # Ensure directories exist with error handling
+    for directory in [DATA_DIR, MODEL_DIR, NLTK_DATA_PATH, UPLOADED_MODELS_DIR]:
+        try:
+            os.makedirs(directory, exist_ok=True)
+            logger.info(f"Created directory: {directory}")
+        except PermissionError:
+            logger.warning(f"Permission denied creating directory: {directory}")
+            # If this is a critical directory, we need to handle the error
+            if directory == DATA_DIR:
+                # Fallback to a temporary directory
+                DATA_DIR = tempfile.mkdtemp()
+                logger.info(f"Using temporary directory instead: {DATA_DIR}")
+            elif directory == MODEL_DIR:
+                MODEL_DIR = tempfile.mkdtemp()
+                UPLOADED_MODELS_DIR = os.path.join(MODEL_DIR, "uploaded")
+                os.makedirs(UPLOADED_MODELS_DIR, exist_ok=True)
+                logger.info(f"Using temporary directory instead: {MODEL_DIR}")
+        except Exception as e:
+            logger.error(f"Error creating directory {directory}: {e}")
 
-# Database path
-DB_PATH = os.path.join(DATA_DIR, "interactions.db")
+    # Database path for local storage
+    DB_PATH = os.path.join(DATA_DIR, "interactions.db")
 
 # NLTK Resources
 NLTK_RESOURCES = ['punkt', 'stopwords', 'wordnet']

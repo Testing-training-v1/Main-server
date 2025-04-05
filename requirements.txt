@@ -21,5 +21,8 @@ nltk==3.8.1
 dropbox==11.36.2  # For Dropbox integration
 pydrive2==1.15.4  # For Google Drive integration (optional)
 
+# System monitoring
+psutil==5.9.5  # For memory usage monitoring
+
 # ML model tools - install this last as it has complex dependencies
 coremltools==7.0
