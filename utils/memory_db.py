@@ -81,13 +81,26 @@ def init_memory_db() -> sqlite3.Connection:
                                             temp_file.write(buffer.read())
                                             temp_path = temp_file.name
                                     
-                                        # Use the sqlite backup API to copy from the file to in-memory DB
-                                        temp_conn = sqlite3.connect(temp_path)
-                                        temp_conn.backup(_in_memory_db)
-                                        temp_conn.close()
-                                    
-                                        # Remove the temporary file
-                                        os.unlink(temp_path)
+                                        # Use a try-except block to handle potential errors in the backup process
+                                        try:
+                                            # Use the sqlite backup API to copy from the file to in-memory DB
+                                            temp_conn = sqlite3.connect(temp_path)
+                                            # Verify both connections are valid
+                                            if temp_conn and _in_memory_db:
+                                                temp_conn.backup(_in_memory_db)
+                                                temp_conn.close()
+                                            else:
+                                                logger.error("One of the database connections is None")
+                                        except Exception as backup_error:
+                                            logger.error(f"Error backing up database: {backup_error}")
+                                
+                                        # Make sure we always clean up the temporary file
+                                        try:
+                                            # Remove the temporary file
+                                            if os.path.exists(temp_path):
+                                                os.unlink(temp_path)
+                                        except Exception as cleanup_error:
+                                            logger.warning(f"Error cleaning up temp file: {cleanup_error}")
                                     
                                         logger.info("Successfully loaded binary database from Dropbox into memory")
                                         _last_db_sync_time = time.time()
