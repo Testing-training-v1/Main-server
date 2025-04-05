@@ -124,7 +124,7 @@ import os
 # Import and initialize Dropbox storage functionality
 if config.DROPBOX_ENABLED:
     from utils.dropbox_storage import init_dropbox_storage, get_dropbox_storage
-    from learning.trainer_dropbox import check_base_model_in_dropbox
+    from learning.trainer_dropbox import check_base_model_in_dropbox, ensure_base_model_folder
     
     # Explicitly initialize Dropbox storage with API key from config
     try:
@@ -142,6 +142,11 @@ if config.DROPBOX_ENABLED:
 try:
     base_model_found = False
     if config.DROPBOX_ENABLED:
+        logger.info("Checking for base model in Dropbox")
+        # Ensure base_model folder exists
+        if ensure_base_model_folder():
+            logger.info("Base model folder confirmed in Dropbox")
+            
         # Check if base model exists in Dropbox
         base_model_available = check_base_model_in_dropbox()
         if base_model_available:
@@ -153,8 +158,8 @@ try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM model_versions WHERE version = '1.0.0'")
                 if cursor.fetchone()[0] == 0:
-                    # Add base model reference to database
-                    base_model_path = f"dropbox:/{config.DROPBOX_MODELS_FOLDER}/{config.BASE_MODEL_NAME}"
+                    # Add base model reference to database - prefer base_model folder
+                    base_model_path = f"dropbox:/{config.DROPBOX_BASE_MODEL_FOLDER}/model_latest.mlmodel"
                     cursor.execute("""
                         INSERT INTO model_versions 
                         (version, path, accuracy, training_data_size, training_date)
@@ -203,6 +208,18 @@ try:
     
     if not base_model_found:
         logger.warning("No base model found. Model training will not work correctly until a base model is provided.")
+        
+        # Try to load from in-memory buffer as a last resort
+        if config.DROPBOX_ENABLED:
+            logger.info("Attempting to load base model from memory buffer as fallback")
+            try:
+                from utils.model_download import get_base_model_buffer
+                model_buffer = get_base_model_buffer()
+                if model_buffer:
+                    logger.info("Successfully loaded base model from memory")
+                    base_model_found = True
+            except Exception as buffer_error:
+                logger.error(f"Failed to load base model from memory: {buffer_error}")
 except Exception as e:
     logger.error(f"Error checking base model: {e}")
 # =============================================================================

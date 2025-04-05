@@ -103,8 +103,10 @@ if DROPBOX_ENABLED:
     
     # Define Dropbox paths to use for resources (these are only used as references)
     DROPBOX_NLTK_FOLDER = "nltk_data"
-    DROPBOX_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/models"
-    DROPBOX_UPLOADED_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/uploaded"
+    # New organization for model storage
+    DROPBOX_BASE_MODEL_FOLDER = "base_model"  # Dedicated folder for base model
+    DROPBOX_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/trained"  # For trained models 
+    DROPBOX_UPLOADED_MODELS_PATH = f"{DROPBOX_MODELS_FOLDER}/uploaded"  # For user-uploaded models
     
     # Skip directory creation - everything uses memory with Dropbox sync
     logger.info("All data will be stored in Dropbox and accessed via memory buffers")
