@@ -109,41 +109,111 @@ def validate_base_model() -> Dict[str, Any]:
         logger.error(error)
         return _store_validation_results(validation_results)
     
-    # Step 3: Save to temporary file for loading with CoreML
+    # Step 3: Prepare model for CoreML validation
     try:
-        import tempfile
+        # Check if we're in memory-only mode (set in entrypoint.sh)
+        memory_only_mode = os.environ.get('MEMORY_ONLY_MODE') == 'True'
+        if memory_only_mode:
+            logger.info("Running in memory-only mode - avoiding temporary files")
         
-        # Check if model_buffer is a streaming object
+        # Check if model_buffer is a streaming object or dict with streaming info
         is_streaming = hasattr(model_buffer, 'read') and hasattr(model_buffer, 'seek') and validation_results.get("streaming", False)
+        is_streaming_dict = isinstance(model_buffer, dict) and model_buffer.get('streaming') and model_buffer.get('download_url')
         
-        # Create a local temporary file - this avoids loading full model into memory
-        with tempfile.NamedTemporaryFile(suffix=".mlmodel", delete=False) as tmp:
-            tmp_path = tmp.name
-            
-            if is_streaming:
-                # Stream directly to the temp file in chunks
-                logger.info("Streaming model directly to temp file for validation")
-                chunk_size = 1024 * 1024  # 1MB chunks
-                while True:
-                    chunk = model_buffer.read(chunk_size)
-                    if not chunk:
-                        break
-                    tmp.write(chunk)
-                # Reset the stream position
-                model_buffer.seek(0)
-            else:
-                # We have a regular buffer
-                logger.info("Writing model buffer to temp file for validation")
-                model_buffer.seek(0)
-                tmp.write(model_buffer.read())
-            
-            validation_results["temp_file"] = tmp_path
-            logger.info(f"Model saved to temp file: {tmp_path}")
+        # Prepare memory buffer for validation
+        import io
+        memory_buffer = io.BytesIO()
         
+        if is_streaming:
+            # Stream from existing streaming object to memory buffer
+            logger.info("Streaming model to memory buffer for validation")
+            chunk_size = 1024 * 1024  # 1MB chunks
+            while True:
+                chunk = model_buffer.read(chunk_size)
+                if not chunk:
+                    break
+                memory_buffer.write(chunk)
+            # Reset positions
+            model_buffer.seek(0)
+            memory_buffer.seek(0)
+            
+        elif is_streaming_dict:
+            # Stream from URL to memory buffer
+            logger.info("Streaming model from URL to memory buffer")
+            import requests
+            
+            url = model_buffer.get('download_url')
+            
+            # Use streaming requests to avoid loading the entire model at once
+            with requests.get(url, stream=True) as response:
+                if response.status_code == 200:
+                    # Get total size for logging
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    
+                    # Use small chunks to avoid high memory usage
+                    for chunk in response.iter_content(chunk_size=1024*1024):  # 1MB chunks
+                        if chunk:
+                            memory_buffer.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Log progress for large models
+                            if total_size > 0 and downloaded % (20*1024*1024) == 0:  # Log every 20MB
+                                logger.info(f"Downloaded {downloaded/(1024*1024):.1f}MB of {total_size/(1024*1024):.1f}MB")
+                    
+                    memory_buffer.seek(0)
+                    logger.info(f"Successfully streamed {downloaded/(1024*1024):.1f}MB to memory")
+                else:
+                    error = f"Error downloading model: HTTP {response.status_code}"
+                    validation_results["errors"].append(error)
+                    logger.error(error)
+                    return _store_validation_results(validation_results)
+        else:
+            # We have a regular buffer
+            logger.info("Copying model buffer for validation")
+            model_buffer.seek(0)
+            memory_buffer.write(model_buffer.read())
+            memory_buffer.seek(0)
+            
         # Step 4: Load and validate model structure
         try:
-            logger.info(f"Loading model from {tmp_path} for validation")
-            model = ct.models.MLModel(tmp_path)
+            # Try to load directly from memory if possible
+            try:
+                logger.info("Attempting to load model directly from memory buffer")
+                model = ct.models.MLModel(memory_buffer)
+                logger.info("Successfully loaded model from memory buffer")
+            except Exception as mem_error:
+                # If direct memory loading fails, we need to use a temp file as fallback
+                logger.warning(f"Could not load model directly from memory: {mem_error}")
+                
+                if memory_only_mode:
+                    # In memory-only mode, create a virtual temp file or fail
+                    try:
+                        from utils.virtual_tempfile import NamedTemporaryFile
+                        with NamedTemporaryFile(suffix=".mlmodel") as tmp:
+                            tmp_path = tmp.name
+                            memory_buffer.seek(0)
+                            tmp.write(memory_buffer.read())
+                            logger.info(f"Using virtual temp file: {tmp_path}")
+                            model = ct.models.MLModel(tmp)
+                    except Exception as vt_error:
+                        error = f"Could not validate model in memory-only mode: {vt_error}"
+                        validation_results["errors"].append(error)
+                        logger.error(error)
+                        return _store_validation_results(validation_results)
+                else:
+                    # In standard mode, fall back to a physical temp file
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix=".mlmodel", delete=False) as tmp:
+                        tmp_path = tmp.name
+                        memory_buffer.seek(0)
+                        tmp.write(memory_buffer.read())
+                    
+                    logger.info(f"Loading model from temporary file: {tmp_path}")
+                    model = ct.models.MLModel(tmp_path)
+                    
+                    # Add temp file info to results for cleanup later
+                    validation_results["temp_file"] = tmp_path
             
             # Get the model specification
             spec = model.get_spec()
@@ -205,10 +275,21 @@ def validate_base_model() -> Dict[str, Any]:
             validation_results["errors"].append(error)
             logger.error(error)
             
-        # Clean up temp file if using local storage
-        if not config.DROPBOX_ENABLED and os.path.exists(tmp_path):
+        # Clean up resources
+        memory_only_mode = os.environ.get('MEMORY_ONLY_MODE') == 'True'
+        
+        # Clean up memory buffer
+        try:
+            if 'memory_buffer' in locals():
+                memory_buffer.close()
+        except Exception as e:
+            logger.debug(f"Error closing memory buffer: {e}")
+            
+        # Clean up temp file if created and not in memory-only mode
+        if not memory_only_mode and 'tmp_path' in locals() and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
+                logger.debug(f"Deleted temporary file: {tmp_path}")
             except Exception as e:
                 logger.warning(f"Could not delete temp file {tmp_path}: {e}")
             

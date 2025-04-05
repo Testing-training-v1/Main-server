@@ -3,57 +3,66 @@ set -e
 
 echo "Starting Backdoor AI Learning Server..."
 
-# Set default directories for data, models, and NLTK data
-DATA_DIR="/tmp/data"
-MODELS_DIR="/tmp/models"
-NLTK_DATA_DIR="/tmp/nltk_data"
+# Operating in memory-only mode with no local storage on Render
+echo "Setting up memory-only operation mode..."
 
-# Check if we're running on a platform that requires environment setup
-if [ -n "$KOYEB_DEPLOYMENT" ]; then
-    echo "Running on Koyeb platform"
-    # Koyeb uses /tmp as writable directory
-    echo "Using directories in /tmp for Koyeb"
-elif [ -n "$RENDER" ]; then
-    echo "Running on Render platform"
+if [ -n "$RENDER" ]; then
+    echo "Running on Render platform - using memory-only mode"
+    # Set environment variables to signal memory-only mode
+    export MEMORY_ONLY_MODE="True"
+    export NO_LOCAL_STORAGE="True"
+    export USE_DROPBOX_STREAMING="True"
     
-    # Check if RENDER_DISK_PATH is set and accessible
-    if [ -n "$RENDER_DISK_PATH" ] && [ -d "$RENDER_DISK_PATH" ] && [ -w "$RENDER_DISK_PATH" ]; then
-        echo "Using persistent disk at $RENDER_DISK_PATH"
-        DATA_DIR="${RENDER_DISK_PATH}/data"
-        MODELS_DIR="${RENDER_DISK_PATH}/models"
-        NLTK_DATA_DIR="${RENDER_DISK_PATH}/nltk_data"
-    else
-        echo "RENDER_DISK_PATH not accessible, using /tmp instead"
-    fi
+    # No directories needed - everything will stream from Dropbox
+    echo "No local directories needed - running in pure memory mode"
+elif [ -n "$KOYEB_DEPLOYMENT" ]; then
+    echo "Running on Koyeb platform - using memory-only mode"
+    # Set environment variables to signal memory-only mode
+    export MEMORY_ONLY_MODE="True"
+    export USE_DROPBOX_STREAMING="True"
 else
     echo "Running in local/custom environment"
     # In local environment, use directories in current directory
     DATA_DIR="./data"
     MODELS_DIR="./models"
     NLTK_DATA_DIR="./nltk_data"
+    
+    # Create local directories only in development mode
+    echo "Creating directories for local development..."
+    mkdir -p "$DATA_DIR" "$MODELS_DIR" "$NLTK_DATA_DIR"
+    
+    # Export directories as environment variables
+    export DATA_DIR MODELS_DIR NLTK_DATA_DIR
+    
+    # Show directory permissions for debugging
+    echo "Directory information:"
+    ls -la "$DATA_DIR" "$MODELS_DIR" "$NLTK_DATA_DIR" 2>/dev/null || echo "Could not list directories"
 fi
 
-# Create required directories with error handling
-echo "Creating required directories..."
-mkdir -p "$DATA_DIR" 2>/dev/null || echo "Warning: Could not create $DATA_DIR, using /tmp"
-mkdir -p "$MODELS_DIR" 2>/dev/null || echo "Warning: Could not create $MODELS_DIR, using /tmp"
-mkdir -p "$NLTK_DATA_DIR" 2>/dev/null || echo "Warning: Could not create $NLTK_DATA_DIR, using /tmp"
+# Set up NLTK for streaming access to resources
+echo "Configuring NLTK for streaming access..."
+python -c "
+import os
+import nltk
+import sys
 
-# If any directories failed to create, fall back to /tmp
-[ -d "$DATA_DIR" ] || DATA_DIR="/tmp/data" && mkdir -p "$DATA_DIR" 2>/dev/null
-[ -d "$MODELS_DIR" ] || MODELS_DIR="/tmp/models" && mkdir -p "$MODELS_DIR" 2>/dev/null
-[ -d "$NLTK_DATA_DIR" ] || NLTK_DATA_DIR="/tmp/nltk_data" && mkdir -p "$NLTK_DATA_DIR" 2>/dev/null
-
-# Export directories as environment variables
-export DATA_DIR MODELS_DIR NLTK_DATA_DIR
-
-# Show directory permissions for debugging
-echo "Directory information:"
-ls -la /tmp /app "$DATA_DIR" "$MODELS_DIR" "$NLTK_DATA_DIR" 2>/dev/null || echo "Could not list directories"
-
-# Install NLTK resources directly (safer approach)
-echo "Installing NLTK resources..."
-python -c "import nltk; nltk.data.path.append('$NLTK_DATA_DIR'); print(f'NLTK paths: {nltk.data.path}'); nltk.download('punkt', download_dir='$NLTK_DATA_DIR', quiet=True); nltk.download('stopwords', download_dir='$NLTK_DATA_DIR', quiet=True); nltk.download('wordnet', download_dir='$NLTK_DATA_DIR', quiet=True); print('NLTK resources installed successfully')"
+# Setup for memory-only operation
+if os.environ.get('MEMORY_ONLY_MODE') == 'True':
+    print('Setting up NLTK for memory-only operation with Dropbox')
+    # NLTK will use our custom provider for resources
+    # No resources will be downloaded to disk
+    nltk.data.path.append('memory:')
+    print(f'NLTK paths: {nltk.data.path}')
+else:
+    # Development mode - download resources locally
+    nltk_data_dir = os.environ.get('NLTK_DATA_DIR', './nltk_data')
+    nltk.data.path.append(nltk_data_dir)
+    print(f'NLTK paths: {nltk.data.path}')
+    nltk.download('punkt', download_dir=nltk_data_dir, quiet=True)
+    nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True)
+    nltk.download('wordnet', download_dir=nltk_data_dir, quiet=True)
+    print('NLTK resources installed successfully')
+"
 
 # Run health check to verify scikit-learn is working
 echo "Verifying scikit-learn installation..."

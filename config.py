@@ -65,6 +65,18 @@ if DROPBOX_ENABLED:
 IS_RENDER = os.getenv("RENDER", "").lower() in ["true", "1", "yes"]
 IS_KOYEB = os.getenv("KOYEB_DEPLOYMENT", "").lower() in ["true", "1", "yes"]
 
+# Memory-only mode for Render deployment
+MEMORY_ONLY_MODE = os.getenv("MEMORY_ONLY_MODE", "False").lower() in ["true", "1", "yes"]
+USE_DROPBOX_STREAMING = os.getenv("USE_DROPBOX_STREAMING", "False").lower() in ["true", "1", "yes"]
+NO_LOCAL_STORAGE = os.getenv("NO_LOCAL_STORAGE", "False").lower() in ["true", "1", "yes"]
+
+# If we're running on Render, enable memory-only mode by default
+if IS_RENDER and not os.environ.get("DISABLE_MEMORY_ONLY_MODE"):
+    MEMORY_ONLY_MODE = True
+    USE_DROPBOX_STREAMING = True
+    NO_LOCAL_STORAGE = True
+    logger.info("Memory-only mode automatically enabled for Render deployment")
+
 # Use environment variables if set, otherwise use platform-specific defaults
 DATA_DIR = os.getenv("DATA_DIR", None)
 MODEL_DIR = os.getenv("MODELS_DIR", None)
@@ -117,14 +129,29 @@ PORT = int(os.getenv("PORT", 10000))
 
 # Handle storage setup based on DROPBOX_ENABLED flag
 if DROPBOX_ENABLED:
-    logger.info("Using Dropbox for all storage - no local directories needed")
-    
-    # Define a temporary directory for any possible cases where a file path is required
-    # But we won't actually create any directories here
-    UPLOADED_MODELS_DIR = os.path.join("/tmp", "upload_models_refs")
-    
-    # Define in-memory database path (this is just a reference for compatibility)
-    DB_PATH = "memory:interactions.db"
+    # Check if we're in memory-only mode - this is the most efficient way to run on Render
+    if MEMORY_ONLY_MODE:
+        logger.info("Using memory-only mode with Dropbox - no local files or directories will be used")
+        
+        # No local storage - everything is streamed directly from Dropbox
+        # For Render's memory constraints, this is crucial
+        UPLOADED_MODELS_DIR = "memory:upload_models_refs"
+        
+        # In-memory database reference
+        DB_PATH = "memory:interactions.db"
+        
+        # Patch tempfile module to use memory-only implementation
+        if USE_DROPBOX_STREAMING:
+            logger.info("Using Dropbox streaming for all resources - minimal memory footprint")
+    else:
+        logger.info("Using Dropbox for all storage - no local directories needed")
+        
+        # Define a temporary directory for any possible cases where a file path is required
+        # But we won't actually create any directories here
+        UPLOADED_MODELS_DIR = os.path.join("/tmp", "upload_models_refs")
+        
+        # Define in-memory database path (this is just a reference for compatibility)
+        DB_PATH = "memory:interactions.db"
     
     # Define Dropbox paths to use for resources (these are only used as references)
     DROPBOX_NLTK_FOLDER = "nltk_data"

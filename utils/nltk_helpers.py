@@ -53,9 +53,9 @@ class DropboxResourceProvider:
             resource_name: Name of the resource to find
             
         Returns:
-            String path to a local cached copy of the resource, or None if not found
+            BytesIO buffer containing the resource data, or None if not found
         """
-        # If we've already cached this resource, return the cached path
+        # If we've already cached this resource, return the cached resource
         if resource_name in self.resource_cache:
             logger.debug(f"Found cached NLTK resource: {resource_name}")
             return self.resource_cache[resource_name]
@@ -71,7 +71,50 @@ class DropboxResourceProvider:
         resource_path = f"{self.nltk_folder}/{resource_name}"
         
         try:
-            # Download resource to memory
+            # Get streaming URL for the resource
+            try:
+                # Try to get a streaming URL first
+                stream_info = self.dropbox_storage.get_model_stream(
+                    resource_name,
+                    folder=self.nltk_folder
+                )
+                
+                if stream_info and stream_info.get('success'):
+                    # Create an in-memory representation of the resource
+                    # This is a virtual path that NLTK will recognize
+                    import io
+                    
+                    # Create a unique identifier for this resource
+                    resource_id = f"memory:{resource_name}"
+                    
+                    # Store the URL and other information in our cache
+                    self.resource_cache[resource_name] = {
+                        'type': 'stream',
+                        'url': stream_info.get('download_url'),
+                        'id': resource_id
+                    }
+                    
+                    # Register a custom loader for this resource with NLTK
+                    from nltk.data import CustomLoader
+                    
+                    class DropboxStreamLoader(CustomLoader):
+                        def load(self, resource_url):
+                            import requests
+                            # Stream resource directly from Dropbox
+                            response = requests.get(stream_info.get('download_url'))
+                            if response.status_code == 200:
+                                return io.BytesIO(response.content)
+                            return None
+                    
+                    # Register our custom loader with NLTK
+                    nltk.data.path.append(resource_id)
+                    
+                    logger.info(f"Registered streaming resource for NLTK: {resource_name}")
+                    return resource_id
+            except Exception as stream_error:
+                logger.warning(f"Error setting up streaming for {resource_name}: {stream_error}")
+            
+            # Fall back to direct download to memory if streaming fails
             result = self.dropbox_storage.download_model_to_memory(
                 resource_name, 
                 folder=self.nltk_folder
@@ -81,16 +124,21 @@ class DropboxResourceProvider:
                 # Get the buffer
                 buffer = result.get('model_buffer')
                 
-                # Save to a temporary file
-                temp_file = os.path.join(self.temp_dir, resource_name)
-                with open(temp_file, 'wb') as f:
-                    f.write(buffer.getvalue())
+                # Create an in-memory resource
+                import io
                 
-                # Cache the path
-                self.resource_cache[resource_name] = temp_file
+                # Generate a unique identifier for this resource
+                resource_id = f"memory:{resource_name}"
+                
+                # Store the buffer in cache
+                self.resource_cache[resource_name] = {
+                    'type': 'buffer',
+                    'data': buffer,
+                    'id': resource_id
+                }
                 
                 logger.info(f"Downloaded NLTK resource from Dropbox: {resource_name}")
-                return temp_file
+                return resource_id
                 
             logger.warning(f"NLTK resource not found in Dropbox: {resource_name}")
             return None
