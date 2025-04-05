@@ -1,0 +1,26 @@
+name: Run Script Manually
+
+on: 
+  workflow_dispatch:  # This event allows you to run the workflow manually
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'  # Specify the version of Python you need
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt  # Assuming you have a requirements.txt file
+
+    - name: Run gen_dropbox_token.py script
+      run: |
+        python gen_dropbox_token.py --generate
