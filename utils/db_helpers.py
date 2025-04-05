@@ -155,8 +155,12 @@ def init_db(db_path: str) -> None:
     Args:
         db_path: Path to the SQLite database
     """
-    # Ensure directory exists for local storage
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    # Ensure directory exists for local storage only if not using memory DB
+    if not db_path.startswith('memory:'):
+        # Only try to create directories for file-based DBs
+        dir_path = os.path.dirname(db_path)
+        if dir_path:  # Only if there's an actual directory path
+            os.makedirs(dir_path, exist_ok=True)
     
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
