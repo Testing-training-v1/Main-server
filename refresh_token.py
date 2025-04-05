@@ -40,84 +40,65 @@ INITIAL_REFRESH_TOKEN = "dummy_refresh_token_for_app_auth"
 
 def generate_new_tokens():
     """
-    Generate tokens from scratch using app credentials.
-    This is a more direct approach without using the OAuth2 flow.
+    Create placeholder token file and provide OAuth setup instructions.
+    
+    Automatic token generation without user interaction is not reliable,
+    so we create a placeholder and provide instructions instead.
     
     Returns:
         tuple: (success, message)
     """
-    logger.info("Attempting to generate new tokens using app credentials...")
+    logger.info("Automatic token generation not possible - providing setup guidance")
     
     try:
-        # Request an access token directly using app credentials
-        # Note: This is a fallback approach using app authorization
-        token_url = "https://api.dropboxapi.com/oauth2/token"
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": APP_KEY,
-            "client_secret": APP_SECRET
-        }
+        # Check if app key and secret are valid
+        if not APP_KEY or APP_KEY == "YOUR_APP_KEY" or not APP_SECRET or APP_SECRET == "YOUR_APP_SECRET":
+            logger.error(
+                "Invalid app credentials. Please set up proper Dropbox app credentials. "
+                "See SETUP_DROPBOX.md for instructions, or run gen_dropbox_token.py --generate "
+                "to set up proper OAuth tokens."
+            )
+            return False, "Invalid app credentials"
         
-        response = requests.post(token_url, data=data)
-        if response.status_code != 200:
-            logger.error(f"Failed to generate token: {response.status_code} - {response.text}")
-            
-            # As a fallback, try to create an initial token file with just the app key
-            logger.info("Creating initial token file with app key as access token")
-            tokens = {
-                "access_token": APP_KEY + ":" + APP_SECRET,
-                "refresh_token": INITIAL_REFRESH_TOKEN,
-                "expiry_time": (datetime.datetime.now() + datetime.timedelta(hours=1)).isoformat()
-            }
-            
-            with open("dropbox_tokens.json", "w") as f:
-                json.dump(tokens, f, indent=2)
-                
-            logger.info("Created initial token file. Will need to be properly set up later.")
-            return False, "Created initial token file with app key"
-            
-        # Parse the response
-        token_data = response.json()
-        access_token = token_data.get("access_token")
-        
-        if not access_token:
-            logger.error("No access token in response")
-            return False, "No access token returned"
-        
-        # Calculate expiry time
-        expires_in = token_data.get("expires_in", 14400)  # Default 4 hours
-        expiry_time = datetime.datetime.now() + datetime.timedelta(seconds=expires_in)
-        expiry_iso = expiry_time.isoformat()
-        
-        # Create token file
+        # Create a placeholder file with instructions
         tokens = {
-            "access_token": access_token,
-            "refresh_token": INITIAL_REFRESH_TOKEN,  # We'll need to get a proper refresh token later
-            "expiry_time": expiry_iso
+            "app_key": APP_KEY,
+            "app_secret": APP_SECRET,
+            "needs_auth": True,
+            "instructions": "Run gen_dropbox_token.py --generate to complete OAuth setup",
+            "created_at": datetime.datetime.now().isoformat()
         }
         
-        with open("dropbox_tokens.json", "w") as f:
-            json.dump(tokens, f, indent=2)
+        # Try to save to both standard location and /tmp as backup
+        saved = False
+        for path in [Path("dropbox_tokens.json"), Path("/tmp/dropbox_tokens.json")]:
+            try:
+                with open(path, "w") as f:
+                    json.dump(tokens, f, indent=2)
+                logger.info(f"Created placeholder token file at {path}")
+                saved = True
+            except Exception as e:
+                logger.warning(f"Could not save token placeholder to {path}: {e}")
         
-        logger.info(f"Generated new access token (expires: {expiry_iso})")
+        if not saved:
+            logger.warning("Could not save token placeholder file to any location")
         
-        # Update environment
-        os.environ["DROPBOX_ACCESS_TOKEN"] = access_token
+        # Log clear instructions
+        logger.warning(
+            "\n==== DROPBOX AUTHENTICATION SETUP REQUIRED ====\n"
+            "Automatic token generation is not possible without user interaction.\n"
+            "To properly set up Dropbox integration:\n"
+            "1. Run: python gen_dropbox_token.py --generate\n"
+            "2. Follow the prompts to authorize the application\n"
+            "3. This will generate the proper OAuth tokens needed for Dropbox access\n"
+            "==== APPLICATION WILL USE LOCAL STORAGE UNTIL SETUP IS COMPLETE ====\n"
+        )
         
-        # Try to update config module
-        try:
-            import config
-            config.DROPBOX_ACCESS_TOKEN = access_token
-            config.DROPBOX_TOKEN_EXPIRY = expiry_iso
-            logger.info("Updated config module with new token")
-        except Exception:
-            pass
-        
-        return True, f"Generated new access token (expires: {expiry_iso})"
+        return False, "Automatic token generation not possible, manual setup required"
         
     except Exception as e:
-        logger.error(f"Error generating new tokens: {e}")
-        return False, f"Error generating new tokens: {e}"
+        logger.error(f"Error creating token placeholder: {e}")
+        return False, f"Error creating token placeholder: {e}"
 
 def create_token_dir():
     """Create directory for token file if it doesn't exist."""
@@ -280,11 +261,16 @@ def refresh_access_token(refresh_token):
         tuple: (success, message)
     """
     try:
-        # Check if we're using the dummy refresh token for initial setup
-        if refresh_token == INITIAL_REFRESH_TOKEN:
-            logger.info("Using dummy refresh token - will try app auth instead")
-            return generate_new_tokens()
+        # Check for invalid refresh tokens
+        if not refresh_token or refresh_token == "YOUR_REFRESH_TOKEN" or refresh_token == INITIAL_REFRESH_TOKEN:
+            logger.warning("Invalid or dummy refresh token - cannot refresh automatically")
+            return generate_new_tokens()  # Will provide setup instructions
         
+        # Validate token format
+        if len(refresh_token) < 10:
+            logger.error("Refresh token is too short")
+            return generate_new_tokens()
+            
         # Get a new access token
         token_url = "https://api.dropboxapi.com/oauth2/token"
         data = {
@@ -295,18 +281,33 @@ def refresh_access_token(refresh_token):
         }
         
         logger.info(f"Refreshing token with client_id={APP_KEY}")
+        logger.debug(f"Refresh token (first 5 chars): {refresh_token[:5] if len(refresh_token) > 5 else 'too_short'}")
+        
         response = requests.post(token_url, data=data)
+        logger.debug(f"Token refresh response: {response.status_code}")
         
         if response.status_code != 200:
-            logger.error(f"Token refresh failed: {response.status_code}")
-            logger.error(f"Response: {response.text}")
+            logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
             
-            # If refresh fails, try generating with app credentials
-            if "invalid_grant" in response.text or "invalid_request" in response.text:
-                logger.info("Refresh token invalid, trying app credentials instead")
-                return generate_new_tokens()
+            # Provide more helpful guidance based on error
+            if "invalid_grant" in response.text:
+                logger.error(
+                    "Refresh token is invalid or expired. You need to run the full OAuth flow. "
+                    "Run gen_dropbox_token.py --generate to set up new tokens."
+                )
+            elif "malformed" in response.text:
+                logger.error(
+                    "Refresh token is malformed. The token format is incorrect. "
+                    "Run gen_dropbox_token.py --generate to generate proper tokens."
+                )
+            elif "invalid_request" in response.text:
+                logger.error(
+                    "Invalid request format. Check app key and app secret. "
+                    "Run gen_dropbox_token.py --generate to ensure all credentials are correct."
+                )
                 
-            return False, f"Token refresh failed: {response.status_code}"
+            # Return to manual setup guidance
+            return generate_new_tokens()
         
         # Parse response
         token_data = response.json()
@@ -419,24 +420,35 @@ def create_direct_token():
 
 def main():
     """Run the token refresh process."""
-    # First try normal refresh
+    logger.info("======== Dropbox Token Refresh Tool ========")
+    logger.info(f"App Key: {APP_KEY[:4]}... App Secret: {APP_SECRET[:4]}...")
+    
+    # Provide instructions for proper setup
+    logger.info(
+        "NOTE: For proper Dropbox authentication with OAuth tokens, you should run:\n"
+        "    python gen_dropbox_token.py --generate\n"
+        "This script will walk you through the OAuth authorization process."
+    )
+    
+    # Try normal refresh
     success, message = refresh_token()
     
-    # If that fails, try direct app auth
     if not success:
-        logger.warning(f"Standard refresh failed: {message}")
-        logger.info("Trying direct app authentication...")
-        success, app_message = create_direct_token()
-        if success:
-            logger.info(f"Success with direct app auth: {app_message}")
-            return 0
-        else:
-            logger.warning(f"Direct app auth also failed: {app_message}")
+        logger.warning(f"Token refresh failed: {message}")
+        # Don't try direct app auth anymore as it doesn't work reliably
+        
+        # Check if fix script exists and recommend it
+        if os.path.exists("fix_dropbox_auth.sh"):
+            logger.info(
+                "You can try running the fix script to reset and repair your tokens:\n"
+                "    bash fix_dropbox_auth.sh"
+            )
     else:
         logger.info(f"Success: {message}")
         
     # Always return success to not block startup
     logger.info("Continuing with existing token or local storage")
+    logger.info("==============================================")
     return 0
 
 if __name__ == "__main__":
