@@ -263,7 +263,8 @@ def check_dropbox_connection():
                 "model_extractions",                  # Model extraction output
                 "diagnostic_logs",                    # Diagnostic logs
                 "ensemble_temp",                      # Ensemble creation temporary files
-                "nltk_data"                           # NLTK resources
+                "nltk_data",                          # NLTK resources
+                "model_validation"                    # Model validation results
             ]
             
             for folder_name in folders_to_check:
@@ -432,6 +433,173 @@ def save_diagnostics_to_dropbox(diagnostics_output):
         print(f"- Error in save_diagnostics_to_dropbox: {e}")
         return False
 
+def check_base_model():
+    """Test the base model and report its status."""
+    print("\n=== Base Model Check ===")
+    
+    try:
+        import config
+        
+        # Check if base model validation is available
+        try:
+            from utils.model_validator import validate_base_model, get_latest_validation_results
+            
+            # Check if we have existing validation results
+            print("- Checking for existing validation results")
+            latest_results = get_latest_validation_results()
+            
+            if latest_results:
+                validation_time = latest_results.get('timestamp', 'unknown')
+                print(f"- Found existing validation from: {validation_time}")
+                
+                # Print validation results summary
+                if latest_results.get('success', False):
+                    print("- Previous validation status: Passed")
+                    
+                    # Print metadata
+                    metadata = latest_results.get('metadata', {})
+                    if metadata:
+                        print("- Model metadata:")
+                        for key, value in metadata.items():
+                            # Don't print very long values
+                            if isinstance(value, str) and len(value) > 50:
+                                print(f"  - {key}: (long text)")
+                            elif isinstance(value, list) and len(value) > 10:
+                                print(f"  - {key}: List with {len(value)} items")
+                            else:
+                                print(f"  - {key}: {value}")
+                    
+                    # Print structure info
+                    structure = latest_results.get('structure', {})
+                    if structure:
+                        print("- Model structure:")
+                        print(f"  - Type: {structure.get('type', 'unknown')}")
+                        print(f"  - Inputs: {len(structure.get('inputs', []))}")
+                        print(f"  - Outputs: {len(structure.get('outputs', []))}")
+                    
+                    # Print test results
+                    test_results = latest_results.get('test_results', {})
+                    if test_results:
+                        passed = test_results.get('passed_count', 0)
+                        total = test_results.get('total_count', 0)
+                        print(f"- Model test results: {passed}/{total} tests passed")
+                        
+                        # Print sample results
+                        samples = test_results.get('samples', [])
+                        if samples:
+                            print("- Sample predictions:")
+                            for i, sample in enumerate(samples[:3]):  # Show up to 3 samples
+                                status = "✓" if sample.get('success', False) else "✗"
+                                print(f"  - {status} Input: \"{sample.get('input')}\" → \"{sample.get('output')}\" ({sample.get('confidence', 0):.2f})")
+                else:
+                    print("- Previous validation status: Failed")
+                    errors = latest_results.get('errors', [])
+                    for error in errors:
+                        print(f"  - Error: {error}")
+            
+            # Run a new validation if requested or if no previous results
+            should_revalidate = not latest_results or input("Run new validation? (y/n): ").lower() == 'y'
+            
+            if should_revalidate:
+                print("- Running new base model validation")
+                validation_results = validate_base_model()
+                
+                if validation_results.get('success', False):
+                    print("- Validation result: Passed ✓")
+                    
+                    # Print basic structure info
+                    structure = validation_results.get('structure', {})
+                    if structure:
+                        print(f"- Model type: {structure.get('type', 'unknown')}")
+                        inputs = structure.get('inputs', [])
+                        outputs = structure.get('outputs', [])
+                        print(f"- Model inputs: {len(inputs)}")
+                        print(f"- Model outputs: {len(outputs)}")
+                    
+                    # Print test summary
+                    test_results = validation_results.get('test_results', {})
+                    if test_results:
+                        passed = test_results.get('passed_count', 0)
+                        total = test_results.get('total_count', 0)
+                        print(f"- Model test results: {passed}/{total} tests passed")
+                        
+                        # Print sample results
+                        samples = test_results.get('samples', [])
+                        if samples:
+                            print("- Sample predictions:")
+                            for i, sample in enumerate(samples):
+                                status = "✓" if sample.get('success', False) else "✗"
+                                print(f"  - {status} Input: \"{sample.get('input')}\" → \"{sample.get('output')}\" ({sample.get('confidence', 0):.2f})")
+                    
+                    # Print storage info
+                    storage = validation_results.get('storage', {})
+                    if storage and storage.get('location') == 'dropbox':
+                        print(f"- Validation results saved to: {storage.get('path')}")
+                        if 'download_url' in storage:
+                            print(f"- Results download URL: {storage.get('download_url')}")
+                else:
+                    print("- Validation result: Failed ✗")
+                    errors = validation_results.get('errors', [])
+                    for error in errors:
+                        print(f"  - Error: {error}")
+        except ImportError:
+            print("- Model validator module not available")
+            
+            # Check directly using CoreML if available
+            try:
+                import coremltools as ct
+                print("- CoreMLTools available, attempting manual model check")
+                
+                # Get base model
+                from utils.model_download import get_base_model_buffer
+                model_buffer = get_base_model_buffer()
+                
+                if model_buffer:
+                    print("- Base model found in storage")
+                    
+                    # Save to temporary file for loading
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix=".mlmodel", delete=False) as tmp:
+                        model_buffer.seek(0)
+                        tmp.write(model_buffer.read())
+                        tmp_path = tmp.name
+                    
+                    try:
+                        # Load model
+                        model = ct.models.MLModel(tmp_path)
+                        spec = model.get_spec()
+                        
+                        # Print basic info
+                        print(f"- Model type: {spec.WhichOneof('Type')}")
+                        print(f"- Model inputs: {len(spec.description.input)}")
+                        print(f"- Model outputs: {len(spec.description.output)}")
+                        
+                        # Check metadata
+                        if model.user_defined_metadata:
+                            print("- Model metadata:")
+                            for key, value in model.user_defined_metadata.items():
+                                if len(value) > 50:
+                                    print(f"  - {key}: (long text)")
+                                else:
+                                    print(f"  - {key}: {value}")
+                        
+                        # Clean up
+                        os.unlink(tmp_path)
+                    except Exception as e:
+                        print(f"- Error loading model: {e}")
+                        if os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+                else:
+                    print("- Base model not found in storage")
+            except ImportError:
+                print("- CoreMLTools not available, cannot check model directly")
+            except Exception as e:
+                print(f"- Error during manual model check: {e}")
+    except ImportError:
+        print("- Failed to import required modules")
+    except Exception as e:
+        print(f"- Base model check error: {e}")
+
 def main():
     """Run all diagnostic checks and optionally save to Dropbox."""
     import io
@@ -462,6 +630,7 @@ def main():
         check_memory_usage()
         check_dropbox_connection()
         try_memory_db_sync()
+        check_base_model()  # Add base model diagnostics
         
         print("\n======== DIAGNOSTICS COMPLETE ========")
         
