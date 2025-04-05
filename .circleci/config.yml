@@ -1,7 +1,6 @@
 version: 2.1
 
-orbs:
-  python: circleci/python@2.1.1
+# No orbs needed - using standard commands
 
 jobs:
   build-and-test:
@@ -30,11 +29,10 @@ jobs:
     steps:
       - checkout
       
-      - python/install-packages:
-          pkg-manager: pip
-          packages:
-            - pip
-          cache-version: v1
+      # Install pip packages directly - compatible with all CircleCI versions
+      - run:
+          name: Install pip
+          command: pip install --upgrade pip
           
       # Install requirements with specific optimizations for CI environment
       - run:
