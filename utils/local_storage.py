@@ -27,14 +27,39 @@ class LocalStorage:
             db_path: Path to the SQLite database file
             models_dir: Directory to store model files
         """
-        self.db_path = db_path
-        self.models_dir = models_dir
+        # Handle empty paths by using temporary directories
+        if not db_path:
+            temp_dir = tempfile.mkdtemp()
+            self.db_path = os.path.join(temp_dir, "interactions.db")
+            logger.warning(f"Empty db_path provided, using temporary file: {self.db_path}")
+        else:
+            self.db_path = db_path
+            
+        if not models_dir:
+            temp_dir = tempfile.mkdtemp()
+            self.models_dir = temp_dir
+            logger.warning(f"Empty models_dir provided, using temporary directory: {self.models_dir}")
+        else:
+            self.models_dir = models_dir
         
         # Ensure directories exist
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        os.makedirs(models_dir, exist_ok=True)
-        
-        logger.info(f"Local storage initialized. DB: {db_path}, Models: {models_dir}")
+        try:
+            if os.path.dirname(self.db_path):
+                os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            
+            os.makedirs(self.models_dir, exist_ok=True)
+            logger.info(f"Local storage initialized. DB: {self.db_path}, Models: {self.models_dir}")
+        except Exception as e:
+            logger.error(f"Error creating directories for local storage: {e}")
+            # Create fallback temporary directories if needed
+            if not os.path.exists(os.path.dirname(self.db_path)):
+                temp_dir = tempfile.mkdtemp()
+                self.db_path = os.path.join(temp_dir, "interactions.db")
+                logger.warning(f"Using fallback temporary DB path: {self.db_path}")
+            
+            if not os.path.exists(self.models_dir):
+                self.models_dir = tempfile.mkdtemp()
+                logger.warning(f"Using fallback temporary models directory: {self.models_dir}")
     
     def get_db_path(self) -> str:
         """
