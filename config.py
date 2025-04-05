@@ -26,8 +26,8 @@ DROPBOX_ENABLED = os.getenv("DROPBOX_ENABLED", "True").lower() in ["true", "1", 
 
 # Dropbox OAuth2 Settings
 # App key and secret for OAuth2 flow - needed for token refresh
-DROPBOX_APP_KEY = os.getenv("DROPBOX_APP_KEY", "YOUR_APP_KEY")
-DROPBOX_APP_SECRET = os.getenv("DROPBOX_APP_SECRET", "YOUR_APP_SECRET")
+DROPBOX_APP_KEY = os.getenv("DROPBOX_APP_KEY", "2bi422xpd3xd962")
+DROPBOX_APP_SECRET = os.getenv("DROPBOX_APP_SECRET", "j3yx0b41qdvfu86")
 
 # The access token - can be regenerated using refresh token
 DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN", "YOUR_ACCESS_TOKEN")
