@@ -66,19 +66,42 @@ def validate_base_model() -> Dict[str, Any]:
         logger.error(error)
         return _store_validation_results(validation_results)
     
-    # Step 2: Get the base model buffer
+    # Step 2: Get the base model (either streamed or buffered)
     try:
-        from utils.model_download import get_base_model_buffer
-        model_buffer = get_base_model_buffer()
-        
-        if model_buffer is None:
-            error = f"Base model {config.BASE_MODEL_NAME} not found"
-            validation_results["errors"].append(error)
-            logger.error(error)
-            return _store_validation_results(validation_results)
+        # First try using the streaming API to avoid loading the entire model
+        try:
+            from utils.model_streamer import get_base_model_stream
+            logger.info("Attempting to stream model for validation")
+            model_buffer = get_base_model_stream()
+            if model_buffer:
+                validation_results["model_found"] = True
+                validation_results["streaming"] = True
+                logger.info(f"Found base model {config.BASE_MODEL_NAME} using streaming API")
+            else:
+                # Fall back to regular buffer method
+                from utils.model_download import get_base_model_buffer
+                model_buffer = get_base_model_buffer()
+                if model_buffer is None:
+                    error = f"Base model {config.BASE_MODEL_NAME} not found"
+                    validation_results["errors"].append(error)
+                    logger.error(error)
+                    return _store_validation_results(validation_results)
+                    
+                validation_results["model_found"] = True
+                logger.info(f"Found base model {config.BASE_MODEL_NAME}")
+        except ImportError:
+            # Fall back to regular buffer method
+            from utils.model_download import get_base_model_buffer
+            model_buffer = get_base_model_buffer()
             
-        validation_results["model_found"] = True
-        logger.info(f"Found base model {config.BASE_MODEL_NAME}")
+            if model_buffer is None:
+                error = f"Base model {config.BASE_MODEL_NAME} not found"
+                validation_results["errors"].append(error)
+                logger.error(error)
+                return _store_validation_results(validation_results)
+                
+            validation_results["model_found"] = True
+            logger.info(f"Found base model {config.BASE_MODEL_NAME}")
         
     except Exception as e:
         error = f"Error loading base model: {str(e)}"
@@ -90,41 +113,36 @@ def validate_base_model() -> Dict[str, Any]:
     try:
         import tempfile
         
-        # In Dropbox mode, use our Dropbox temp files
-        if config.DROPBOX_ENABLED:
-            try:
-                from utils.dropbox_tempfile import create_temp_file
-                tmp_file = create_temp_file(
-                    prefix="model_validation_", 
-                    suffix=".mlmodel",
-                    folder="model_validation"
-                )
+        # Check if model_buffer is a streaming object
+        is_streaming = hasattr(model_buffer, 'read') and hasattr(model_buffer, 'seek') and validation_results.get("streaming", False)
+        
+        # Create a local temporary file - this avoids loading full model into memory
+        with tempfile.NamedTemporaryFile(suffix=".mlmodel", delete=False) as tmp:
+            tmp_path = tmp.name
+            
+            if is_streaming:
+                # Stream directly to the temp file in chunks
+                logger.info("Streaming model directly to temp file for validation")
+                chunk_size = 1024 * 1024  # 1MB chunks
+                while True:
+                    chunk = model_buffer.read(chunk_size)
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+                # Reset the stream position
                 model_buffer.seek(0)
-                tmp_file.write(model_buffer.read())
-                tmp_path = tmp_file.name
-                tmp_file.close()  # This uploads to Dropbox
-                validation_results["temp_file"] = tmp_path
-                logger.info(f"Saved model to Dropbox temp file for validation")
-            except Exception as e:
-                warning = f"Could not use Dropbox temp files: {str(e)}"
-                validation_results["warnings"].append(warning)
-                logger.warning(warning)
-                # Fall back to local temp file
-                with tempfile.NamedTemporaryFile(suffix=".mlmodel", delete=False) as tmp:
-                    model_buffer.seek(0)
-                    tmp.write(model_buffer.read())
-                    tmp_path = tmp.name
-                validation_results["temp_file"] = tmp_path
-        else:
-            # Use local temp file
-            with tempfile.NamedTemporaryFile(suffix=".mlmodel", delete=False) as tmp:
+            else:
+                # We have a regular buffer
+                logger.info("Writing model buffer to temp file for validation")
                 model_buffer.seek(0)
                 tmp.write(model_buffer.read())
-                tmp_path = tmp.name
+            
             validation_results["temp_file"] = tmp_path
+            logger.info(f"Model saved to temp file: {tmp_path}")
         
         # Step 4: Load and validate model structure
         try:
+            logger.info(f"Loading model from {tmp_path} for validation")
             model = ct.models.MLModel(tmp_path)
             
             # Get the model specification
