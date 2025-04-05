@@ -15,6 +15,15 @@ if [ -n "$RENDER" ]; then
     
     # No directories needed - everything will stream from Dropbox
     echo "No local directories needed - running in pure memory mode"
+elif [ -n "$CIRCLECI" ] || [ -n "$CIRCLECI_ENV" ]; then
+    echo "Running on CircleCI platform - using memory-only mode"
+    # Set environment variables to signal memory-only mode
+    export MEMORY_ONLY_MODE="True"
+    export NO_LOCAL_STORAGE="True"
+    export USE_DROPBOX_STREAMING="True"
+    
+    # No directories needed - everything will stream from Dropbox
+    echo "No local directories needed - running in pure memory mode for CircleCI"
 elif [ -n "$KOYEB_DEPLOYMENT" ]; then
     echo "Running on Koyeb platform - using memory-only mode"
     # Set environment variables to signal memory-only mode
