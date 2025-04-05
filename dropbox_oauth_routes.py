@@ -67,7 +67,27 @@ def save_tokens(tokens):
     # Log token info (sanitized)
     logger.info(f"Saving tokens: {json.dumps(safe_tokens)}")
     
-    # Save to file
+    # Try to use the token manager first
+    try:
+        from utils.token_manager import get_token_manager
+        token_manager = get_token_manager()
+        
+        # Update the token manager with the new tokens
+        if "access_token" in tokens:
+            token_manager.access_token = tokens["access_token"]
+        if "refresh_token" in tokens:
+            token_manager.refresh_token = tokens["refresh_token"]
+        if "expiry_time" in tokens:
+            token_manager.expiry_time = tokens["expiry_time"]
+            
+        # Let the token manager save the tokens
+        token_manager._save_tokens()
+        logger.info("Tokens saved via token manager")
+        return True
+    except ImportError:
+        logger.warning("Token manager not available, using direct file save")
+    
+    # Fallback to direct file save if token manager not available
     token_file = "dropbox_tokens.json"
     try:
         with open(token_file, 'w') as f:
