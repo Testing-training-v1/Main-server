@@ -87,10 +87,19 @@ def initialize_storage():
     # Always initialize local storage as fallback
     try:
         from utils.local_storage import init_local_storage
-        local_storage = init_local_storage(
-            config.DB_PATH,
-            config.MODEL_DIR
-        )
+        
+        # Ensure we have valid paths for local storage
+        db_path = config.DB_PATH
+        model_dir = config.MODEL_DIR
+        
+        # If we're using memory DB path, create a real file path for local storage
+        if db_path.startswith("memory:"):
+            temp_dir = tempfile.mkdtemp()
+            db_path = os.path.join(temp_dir, "local_fallback.db")
+            logger.info(f"Using temporary file for local storage fallback: {db_path}")
+        
+        # Initialize local storage with validated paths
+        local_storage = init_local_storage(db_path, model_dir)
         _storage_backends['local'] = local_storage
         logger.info("Local storage initialized")
     except Exception as e:

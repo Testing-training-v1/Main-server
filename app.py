@@ -138,7 +138,7 @@ if config.DROPBOX_ENABLED:
         logger.error(f"Failed to initialize Dropbox storage in app startup: {e}")
         config.DROPBOX_ENABLED = False  # Disable Dropbox if initialization fails
 
-# Check for base model in Dropbox
+# Check for base model in Dropbox and validate it
 try:
     base_model_found = False
     if config.DROPBOX_ENABLED:
@@ -174,6 +174,61 @@ try:
                     conn.commit()
                     logger.info(f"Added base model reference to database: {base_model_path}")
             base_model_found = True
+            
+            # Run model validation
+            logger.info("Running base model validation and diagnostics")
+            try:
+                from utils.model_validator import validate_base_model
+                validation_results = validate_base_model()
+                
+                if validation_results.get('success', False):
+                    logger.info("Base model validation successful")
+                    
+                    # Log validation results
+                    structure = validation_results.get('structure', {})
+                    metadata = validation_results.get('metadata', {})
+                    test_results = validation_results.get('test_results', {})
+                    
+                    # Log model structure 
+                    logger.info(f"Model type: {structure.get('type', 'unknown')}")
+                    logger.info(f"Model inputs: {len(structure.get('inputs', []))}")
+                    logger.info(f"Model outputs: {len(structure.get('outputs', []))}")
+                    
+                    # Log test results
+                    logger.info(f"Model test results: {test_results.get('passed_count', 0)}/{test_results.get('total_count', 0)} tests passed")
+                    
+                    # Add metadata to database
+                    try:
+                        with get_connection(config.DB_PATH) as conn:
+                            cursor = conn.cursor()
+                            # Check if metadata column exists
+                            try:
+                                cursor.execute("SELECT metadata FROM model_versions WHERE version = '1.0.0'")
+                            except sqlite3.OperationalError:
+                                # Add metadata column if it doesn't exist
+                                cursor.execute("ALTER TABLE model_versions ADD COLUMN metadata TEXT")
+                            
+                            # Convert validation results to JSON string
+                            metadata_json = json.dumps(validation_results)
+                            
+                            # Update metadata
+                            cursor.execute("""
+                                UPDATE model_versions
+                                SET metadata = ?
+                                WHERE version = '1.0.0'
+                            """, (metadata_json,))
+                            conn.commit()
+                            logger.info("Updated base model metadata in database")
+                    except Exception as e:
+                        logger.error(f"Error updating model metadata in database: {e}")
+                else:
+                    logger.warning("Base model validation failed!")
+                    if validation_results.get('errors'):
+                        for error in validation_results.get('errors'):
+                            logger.error(f"Validation error: {error}")
+            except Exception as e:
+                logger.error(f"Error validating base model: {e}")
+                
         else:
             logger.warning(f"Base model '{config.BASE_MODEL_NAME}' not found in Dropbox. Please upload it to your Dropbox folder.")
     else:
@@ -203,6 +258,24 @@ try:
                     conn.commit()
                     logger.info(f"Added base model reference to database: {base_model_path}")
             base_model_found = True
+            
+            # Run model validation for local model
+            logger.info("Running local base model validation and diagnostics")
+            try:
+                from utils.model_validator import validate_base_model
+                validation_results = validate_base_model()
+                
+                if validation_results.get('success', False):
+                    logger.info("Base model validation successful")
+                    # Log validation results summary
+                    structure = validation_results.get('structure', {})
+                    test_results = validation_results.get('test_results', {})
+                    logger.info(f"Model type: {structure.get('type', 'unknown')}")
+                    logger.info(f"Model test results: {test_results.get('passed_count', 0)}/{test_results.get('total_count', 0)} tests passed")
+                else:
+                    logger.warning("Base model validation failed!")
+            except Exception as e:
+                logger.error(f"Error validating base model: {e}")
         else:
             logger.warning(f"Base model not found at {base_model_path}. Please place your model file in the models directory.")
     
@@ -218,6 +291,17 @@ try:
                 if model_buffer:
                     logger.info("Successfully loaded base model from memory")
                     base_model_found = True
+                    
+                    # Run validation on fallback model
+                    try:
+                        from utils.model_validator import validate_base_model
+                        validation_results = validate_base_model()
+                        if validation_results.get('success', False):
+                            logger.info("Fallback base model validation successful")
+                        else:
+                            logger.warning("Fallback base model validation failed!")
+                    except Exception as e:
+                        logger.error(f"Error validating fallback base model: {e}")
             except Exception as buffer_error:
                 logger.error(f"Failed to load base model from memory: {buffer_error}")
     else:

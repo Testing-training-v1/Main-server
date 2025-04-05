@@ -64,12 +64,36 @@ def init_memory_db() -> sqlite3.Connection:
                         buffer = db_data.get('db_buffer')
                         if buffer:
                             try:
-                                # Import the SQL dump into memory
+                                # Import the SQL dump into memory - handle possible binary data
                                 buffer.seek(0)
-                                script = buffer.read().decode('utf-8')
-                                _in_memory_db.executescript(script)
-                                logger.info("Successfully loaded database from Dropbox into memory")
-                                _last_db_sync_time = time.time()
+                                try:
+                                    # First try UTF-8 decoding
+                                    script = buffer.read().decode('utf-8')
+                                    _in_memory_db.executescript(script)
+                                    logger.info("Successfully loaded database from Dropbox into memory")
+                                    _last_db_sync_time = time.time()
+                                except UnicodeDecodeError:
+                                    # If UTF-8 fails, try to handle as binary SQLite file
+                                    buffer.seek(0)
+                                    try:
+                                        # Create a temporary file to store the binary data
+                                        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                                            temp_file.write(buffer.read())
+                                            temp_path = temp_file.name
+                                    
+                                        # Use the sqlite backup API to copy from the file to in-memory DB
+                                        temp_conn = sqlite3.connect(temp_path)
+                                        temp_conn.backup(_in_memory_db)
+                                        temp_conn.close()
+                                    
+                                        # Remove the temporary file
+                                        os.unlink(temp_path)
+                                    
+                                        logger.info("Successfully loaded binary database from Dropbox into memory")
+                                        _last_db_sync_time = time.time()
+                                    except Exception as binary_error:
+                                        logger.error(f"Error loading binary database: {binary_error}")
+                                        logger.info("Starting with fresh in-memory database")
                             except Exception as script_error:
                                 logger.error(f"Error executing SQL script from Dropbox: {script_error}")
                                 logger.info("Starting with fresh in-memory database")

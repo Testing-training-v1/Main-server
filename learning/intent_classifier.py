@@ -178,33 +178,45 @@ class IntentClassifier:
                     temp_file_path = None
                     
                     # Try to get model from various sources
+                    # Import the Dropbox temporary file utility
+                    from utils.dropbox_tempfile import create_temp_file
+                    
                     # 1. Check if we have model buffer in memory
                     if 'model_buffer' in uploaded_model:
                         logger.info(f"Using model buffer for model {model_id}")
                         model_buffer = uploaded_model['model_buffer']
-                        # Save buffer to temporary file
-                        with tempfile.NamedTemporaryFile(suffix='.mlmodel', delete=False) as tmp_file:
+                        # Save buffer to Dropbox-backed temporary file
+                        tmp_file = create_temp_file(prefix=f"model_{model_id}_", suffix='.mlmodel', folder="ensemble_temp")
+                        try:
                             model_buffer.seek(0)
                             tmp_file.write(model_buffer.read())
                             temp_file_path = tmp_file.name
+                            tmp_file.close()  # This uploads to Dropbox
+                            logger.info(f"Saved model buffer to Dropbox temp file: {tmp_file.dropbox_path}")
+                        except Exception as e:
+                            logger.error(f"Error saving model buffer to Dropbox temp file: {e}")
+                            tmp_file.close()
                     
                     # 2. Check if we have a download URL
                     elif 'download_url' in uploaded_model:
                         download_url = uploaded_model['download_url']
                         logger.info(f"Downloading model {model_id} from URL: {download_url}")
-                        # Download model from URL to temporary file
+                        # Download model from URL to Dropbox-backed temporary file
                         import requests
                         try:
-                            with tempfile.NamedTemporaryFile(suffix='.mlmodel', delete=False) as tmp_file:
-                                response = requests.get(download_url, stream=True)
-                                response.raise_for_status()
-                                for chunk in response.iter_content(chunk_size=8192):
-                                    if chunk:
-                                        tmp_file.write(chunk)
-                                temp_file_path = tmp_file.name
-                                logger.info(f"Downloaded model to temporary file: {temp_file_path}")
+                            tmp_file = create_temp_file(prefix=f"model_{model_id}_", suffix='.mlmodel', folder="ensemble_temp")
+                            response = requests.get(download_url, stream=True)
+                            response.raise_for_status()
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    tmp_file.write(chunk)
+                            temp_file_path = tmp_file.name
+                            tmp_file.close()  # This uploads to Dropbox
+                            logger.info(f"Downloaded model to Dropbox temp file: {tmp_file.dropbox_path}")
                         except Exception as e:
                             logger.error(f"Error downloading model from URL: {e}")
+                            if 'tmp_file' in locals():
+                                tmp_file.close()
                     
                     # 3. Check if we have a file path
                     elif 'file_path' in uploaded_model:
@@ -226,15 +238,17 @@ class IntentClassifier:
                                         model_name = os.path.basename(dropbox_path)
                                         
                                         logger.info(f"Downloading model {model_name} from Dropbox")
-                                        # Download to temporary file
+                                        # Download to Dropbox-backed temporary file
                                         memory_download = dropbox_storage.download_model_to_memory(model_name)
                                         if memory_download and memory_download.get('success'):
+                                            from utils.dropbox_tempfile import create_temp_file
                                             model_buffer = memory_download.get('model_buffer')
-                                            with tempfile.NamedTemporaryFile(suffix='.mlmodel', delete=False) as tmp_file:
-                                                model_buffer.seek(0)
-                                                tmp_file.write(model_buffer.read())
-                                                temp_file_path = tmp_file.name
-                                                logger.info(f"Saved Dropbox model to temporary file: {temp_file_path}")
+                                            tmp_file = create_temp_file(prefix=f"model_{model_id}_", suffix='.mlmodel', folder="ensemble_temp")
+                                            model_buffer.seek(0)
+                                            tmp_file.write(model_buffer.read())
+                                            temp_file_path = tmp_file.name
+                                            tmp_file.close()  # This uploads to Dropbox
+                                            logger.info(f"Saved Dropbox model to Dropbox temp file: {tmp_file.dropbox_path}")
                                 except Exception as e:
                                     logger.error(f"Error downloading model from Dropbox: {e}")
                         
@@ -270,10 +284,13 @@ class IntentClassifier:
                             
                             logger.info(f"Created compatible model for {model_id}")
                             
-                            # Clean up temporary file if we created one
-                            if temp_file_path != file_path and os.path.exists(temp_file_path):
+                            # No need to clean up Dropbox temp files - they will persist in Dropbox
+                            # If using local temp file fallback, clean it up
+                            if temp_file_path != file_path and 'temp_file_path' in locals() and os.path.exists(temp_file_path) and not temp_file_path.startswith('model_'):
                                 os.unlink(temp_file_path)
-                                logger.info(f"Cleaned up temporary file: {temp_file_path}")
+                                logger.info(f"Cleaned up local temporary file: {temp_file_path}")
+                            else:
+                                logger.info(f"Temporary file preserved in Dropbox for future reference")
                             
                         except Exception as e:
                             logger.error(f"Error creating compatible model from file: {e}")
