@@ -147,21 +147,35 @@ def clear_model_cache():
         _model_cache.clear()
         logger.info("Model cache cleared")
 
-def get_model_buffer(version: str) -> Optional[io.BytesIO]:
+def get_model_buffer(version: str) -> Optional[Union[io.BytesIO, 'utils.model_streamer.StreamingModelFile']]:
     """
-    Get any model version as an in-memory buffer, with caching.
+    Get any model version as a file-like object, prioritizing streaming.
+    
+    This function tries to use streaming when possible to avoid loading
+    the entire model into memory, significantly reducing memory usage.
     
     Args:
         version: Model version to get
         
     Returns:
-        BytesIO buffer containing the model data or None if not found
+        A file-like object (StreamingModelFile or BytesIO) or None if model not found
     """
     # Handle base model specially
     if version == '1.0.0':
         return get_base_model_buffer()
-        
-    # Try to get from cache first
+    
+    # Try to use the streaming API first to avoid loading entire model
+    try:
+        from utils.model_streamer import get_model_stream
+        model_name = f"model_{version}.mlmodel"
+        stream = get_model_stream(model_name)
+        if stream:
+            logger.info(f"Serving model {version} via streaming (low memory usage)")
+            return stream
+    except ImportError:
+        logger.warning("Model streamer not available, falling back to in-memory")
+    
+    # Try to get from cache if streaming is not available
     with _model_cache_lock:
         if version in _model_cache:
             # Return a copy of the cached buffer to avoid threading issues
@@ -179,65 +193,36 @@ def get_model_buffer(version: str) -> Optional[io.BytesIO]:
             # Construct model filename
             model_name = f"model_{version}.mlmodel"
             
-            # First try using streaming download
+            # Try to get streaming URL
             try:
-                # Try to get streaming URL
                 stream_info = dropbox_storage.get_model_stream(model_name)
                 
                 if stream_info and stream_info.get('success'):
-                    # Download using the URL
-                    import requests
-                    download_url = stream_info.get('download_url')
-                    logger.info(f"Downloading model {model_name} using streaming URL")
-                    
-                    response = requests.get(download_url, stream=True)
-                    if response.status_code == 200:
-                        # Create buffer and store in cache
-                        buffer = io.BytesIO()
-                        for chunk in response.iter_content(chunk_size=8192):
-                            buffer.write(chunk)
-                        
-                        # Reset buffer position
-                        buffer.seek(0)
-                        
-                        # Cache for future use if it's not too large (>50MB)
-                        buffer_size = len(buffer.getvalue())
-                        if buffer_size < 50 * 1024 * 1024:  # 50MB limit for cache
-                            with _model_cache_lock:
-                                _model_cache[version] = io.BytesIO(buffer.getvalue())
-                        else:
-                            logger.info(f"Model {version} too large ({buffer_size/1024/1024:.1f}MB) for memory cache")
-                        
-                        logger.info(f"Successfully downloaded model {version} using streaming")
-                        return buffer
-                        
-                    logger.warning(f"Failed to download model {version} using streaming URL")
+                    logger.info(f"Obtained streaming URL for model {version}")
+                    # Return streaming info for more memory-efficient processing
+                    return {
+                        'success': True,
+                        'download_url': stream_info.get('download_url'),
+                        'size': stream_info.get('size'),
+                        'streaming': True
+                    }
             except Exception as e:
-                logger.warning(f"Error using model streaming: {e}")
+                logger.warning(f"Error getting streaming URL: {e}")
             
             # Fall back to direct download if streaming failed
-            # Try to download directly to memory
             logger.info(f"Falling back to direct download for model {model_name}")
             result = dropbox_storage.download_model_to_memory(model_name)
             
             if result and result.get('success'):
-                # Get the buffer and cache it
+                # Get the buffer
                 buffer = result.get('model_buffer')
                 if buffer:
-                    # Cache for future use if it's not too large (>50MB)
-                    buffer_size = len(buffer.getvalue())
-                    if buffer_size < 50 * 1024 * 1024:  # 50MB limit for cache
-                        with _model_cache_lock:
-                            _model_cache[version] = io.BytesIO(buffer.getvalue())
-                    else:
-                        logger.info(f"Model {version} too large ({buffer_size/1024/1024:.1f}MB) for memory cache")
-                    
-                    # Return a copy of the buffer
+                    logger.warning(f"Downloaded model {version} to memory - higher RAM usage")
                     buffer.seek(0)
                     logger.info(f"Successfully loaded model {version} from Dropbox")
                     return buffer
             
-            logger.warning(f"Failed to download model {version} from Dropbox: {result.get('error', 'Unknown error')}")
+            logger.warning(f"Failed to download model {version}: {result and result.get('error', 'Unknown error')}")
             return None
             
         except Exception as e:
