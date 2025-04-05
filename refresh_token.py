@@ -423,22 +423,42 @@ def main():
     logger.info("======== Dropbox Token Refresh Tool ========")
     logger.info(f"App Key: {APP_KEY[:4]}... App Secret: {APP_SECRET[:4]}...")
     
+    # Check for built-in OAuth routes and provide guidance
+    import sys  # Ensure sys is imported
+    
     # Provide instructions for proper setup
-    logger.info(
-        "NOTE: For proper Dropbox authentication with OAuth tokens, you should run:\n"
-        "    python gen_dropbox_token.py --generate\n"
-        "This script will walk you through the OAuth authorization process."
-    )
+    # Check if we're running in a web app context
+    render_service_name = os.environ.get('RENDER_SERVICE_NAME')
+    if render_service_name:
+        oauth_url = f"https://{render_service_name}.onrender.com/oauth/dropbox/authorize"
+        setup_url = f"https://{render_service_name}.onrender.com/dropbox-setup"
+        logger.info(
+            "NOTE: This application has built-in OAuth support!\n"
+            f"Visit {setup_url} for setup instructions\n"
+            f"Then visit {oauth_url} to complete the OAuth flow."
+        )
+    else:
+        logger.info(
+            "NOTE: For proper Dropbox authentication with OAuth tokens, you should run:\n"
+            "    python gen_dropbox_token.py --generate\n"
+            "This script will walk you through the OAuth authorization process."
+        )
     
     # Try normal refresh
     success, message = refresh_token()
     
     if not success:
         logger.warning(f"Token refresh failed: {message}")
-        # Don't try direct app auth anymore as it doesn't work reliably
         
+        # Don't try direct app auth anymore as it doesn't work reliably
+        if render_service_name:
+            # If we're on Render, suggest using the web OAuth flow
+            logger.info(
+                f"Please use the web OAuth flow by visiting {oauth_url}\n"
+                "This will properly set up your authentication tokens."
+            )
         # Check if fix script exists and recommend it
-        if os.path.exists("fix_dropbox_auth.sh"):
+        elif os.path.exists("fix_dropbox_auth.sh"):
             logger.info(
                 "You can try running the fix script to reset and repair your tokens:\n"
                 "    bash fix_dropbox_auth.sh"

@@ -121,6 +121,7 @@ class DropboxStorage:
                 # Check if refresh_token.py exists
                 if os.path.exists("refresh_token.py"):
                     import subprocess
+                    import sys  # Explicitly import sys module
                     result = subprocess.run(
                         [sys.executable, "refresh_token.py"], 
                         capture_output=True, 
@@ -145,6 +146,15 @@ class DropboxStorage:
                         logger.warning(f"Error loading tokens after refresh: {e}")
             except Exception as e:
                 logger.warning(f"Error running refresh script: {e}")
+                
+            # Check if we should try using the built-in OAuth routes
+            try:
+                # If we have a web server running, display OAuth guidance
+                render_service_name = os.environ.get('RENDER_SERVICE_NAME', 'backdoor-ai')
+                oauth_url = f"https://{render_service_name}.onrender.com/oauth/dropbox/authorize"
+                logger.info(f"To complete OAuth setup, visit: {oauth_url}")
+            except Exception:
+                pass  # No need to handle this error
             
             # Initialize Dropbox client with access token and app credentials
             if self.app_key and self.app_secret:
