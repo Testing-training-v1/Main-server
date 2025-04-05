@@ -115,39 +115,40 @@ class DropboxStorage:
             dropbox.Dropbox: Authenticated instance or None
         """
         try:
-            # Run the external refresh script first to ensure we have valid tokens
+            # Use the centralized token manager for authentication
             try:
-                logger.info("Running refresh_token.py to ensure valid tokens")
-                # Check if refresh_token.py exists
-                if os.path.exists("refresh_token.py"):
-                    import subprocess
-                    import sys  # Explicitly import sys module
-                    result = subprocess.run(
-                        [sys.executable, "refresh_token.py"], 
-                        capture_output=True, 
-                        text=True
-                    )
-                    logger.info(f"refresh_token.py exit code: {result.returncode}")
-                    logger.info(f"refresh_token.py output: {result.stdout}")
-                    
-                    # Try to reload tokens from file
-                    try:
-                        token_path = os.path.join(os.getcwd(), "dropbox_tokens.json")
-                        if os.path.exists(token_path):
-                            with open(token_path, "r") as f:
-                                tokens = json.load(f)
-                            if "access_token" in tokens:
-                                self.access_token = tokens["access_token"]
-                                logger.info("Updated access token from refresh script")
-                                if "refresh_token" in tokens:
-                                    self.refresh_token = tokens["refresh_token"]
-                                    logger.info("Updated refresh token from refresh script")
-                    except Exception as e:
-                        logger.warning(f"Error loading tokens after refresh: {e}")
-            except Exception as e:
-                logger.warning(f"Error running refresh script: {e}")
+                # Import the token manager
+                from utils.token_manager import get_token_manager
                 
-            # Check if we should try using the built-in OAuth routes
+                # Get the token manager instance
+                token_manager = get_token_manager()
+                
+                # Get a valid access token (refreshes automatically if needed)
+                valid_token = token_manager.get_valid_access_token()
+                
+                if valid_token:
+                    # Update our local access token
+                    self.access_token = valid_token
+                    logger.info("Retrieved valid access token from token manager")
+                else:
+                    logger.warning("Token manager could not provide a valid access token")
+                    
+            except ImportError:
+                logger.warning("Could not import token manager, falling back to local tokens")
+                # Try to reload tokens from file as a fallback
+                try:
+                    token_path = os.path.join(os.getcwd(), "dropbox_tokens.json")
+                    if os.path.exists(token_path):
+                        with open(token_path, "r") as f:
+                            tokens = json.load(f)
+                        if "access_token" in tokens:
+                            self.access_token = tokens["access_token"]
+                            logger.info("Updated access token from token file")
+                            if "refresh_token" in tokens:
+                                self.refresh_token = tokens["refresh_token"]
+                                logger.info("Updated refresh token from token file")
+                except Exception as e:
+                    logger.warning(f"Error loading tokens from file: {e}")
             try:
                 # If we have a web server running, display OAuth guidance
                 render_service_name = os.environ.get('RENDER_SERVICE_NAME', 'backdoor-ai')
@@ -920,26 +921,47 @@ def init_dropbox_storage(api_key: str = None, db_filename: str = "interactions.d
     """
     global _dropbox_storage
     
-    # First try to run the token refresh script if it exists
+    # Use the centralized token manager to ensure we have valid tokens
     try:
-        if os.path.exists("refresh_token.py"):
+        # Import the token manager
+        from utils.token_manager import get_token_manager
+        
+        # Get the token manager instance
+        token_manager = get_token_manager()
+        
+        # Get a valid access token (refreshes automatically if needed)
+        valid_token = token_manager.get_valid_access_token()
+        
+        if valid_token:
+            # Use the valid token from the token manager
+            access_token = valid_token
+            logger.info("Using valid access token from token manager")
+            
+            # Get the refresh token too, if a valid one exists
+            if token_manager.refresh_token and token_manager.refresh_token != "YOUR_REFRESH_TOKEN":
+                refresh_token = token_manager.refresh_token
+                
+    except ImportError:
+        logger.warning("Token manager not available, using provided tokens")
+        
+        # Run automatic token refresh script as fallback
+        try:
             import subprocess
-            logger.info("Running external refresh_token.py script")
-            try:
+            import sys
+            if os.path.exists("refresh_token_auto.py"):
+                logger.info("Running automatic token refresh script")
                 result = subprocess.run(
-                    [sys.executable, "refresh_token.py"], 
+                    [sys.executable, "refresh_token_auto.py"],
                     capture_output=True,
                     text=True,
-                    timeout=30  # Don't let it hang too long
+                    timeout=10
                 )
-                logger.info(f"refresh_token.py exit code: {result.returncode}")
-                for line in result.stdout.splitlines():
-                    if line and not line.isspace():
-                        logger.info(f"refresh_token.py: {line}")
-            except Exception as e:
-                logger.warning(f"Error running refresh_token.py: {e}")
-    except Exception as e:
-        logger.warning(f"Could not execute refresh script: {e}")
+                if result.returncode == 0:
+                    logger.info("Token refresh successful")
+                else:
+                    logger.warning("Token refresh script returned non-zero exit code")
+        except Exception as e:
+            logger.warning(f"Error running token refresh script: {e}")
     
     with _initialization_lock:
         # If we already have an instance and it's working, return it
@@ -1027,16 +1049,32 @@ def get_dropbox_storage():
         logger.error(
             "Dropbox storage not initialized. To use Dropbox storage, you need to: "
             "1. Make sure DROPBOX_ENABLED=True in config.py "
-            "2. Set up OAuth tokens by following instructions in SETUP_DROPBOX.md "
-            "3. Ensure you have a valid Dropbox app with proper permissions"
+            "2. Set DROPBOX_REFRESH_TOKEN in config.py or use setup_oauth.py "
+            "3. Restart the application after setting the refresh token"
         )
         raise RuntimeError("Dropbox storage not initialized. Call init_dropbox_storage() first.")
     
     # Check if the client is properly authenticated
     if not hasattr(_dropbox_storage, 'dbx') or _dropbox_storage.dbx is None:
+        try:
+            # Try to refresh authentication using token manager
+            from utils.token_manager import get_token_manager
+            token_manager = get_token_manager()
+            
+            # Check if we have a refresh token
+            if token_manager.refresh_token:
+                logger.info("Attempting to refresh Dropbox authentication using token manager")
+                # Force token refresh
+                if token_manager.refresh_token_if_needed():
+                    # Try to initialize again with the new token
+                    logger.info("Token refreshed, reinitializing Dropbox storage")
+                    return init_dropbox_storage()
+        except ImportError:
+            pass
+            
         logger.error(
-            "Dropbox client not authenticated. Please run gen_dropbox_token.py --generate "
-            "to set up proper authentication tokens."
+            "Dropbox client not authenticated. Set DROPBOX_REFRESH_TOKEN in config.py "
+            "or run setup_oauth.py to configure authentication."
         )
         raise RuntimeError("Dropbox client not authenticated.")
     

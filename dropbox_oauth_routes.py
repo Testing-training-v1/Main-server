@@ -67,7 +67,27 @@ def save_tokens(tokens):
     # Log token info (sanitized)
     logger.info(f"Saving tokens: {json.dumps(safe_tokens)}")
     
-    # Save to file
+    # Try to use the token manager first
+    try:
+        from utils.token_manager import get_token_manager
+        token_manager = get_token_manager()
+        
+        # Update the token manager with the new tokens
+        if "access_token" in tokens:
+            token_manager.access_token = tokens["access_token"]
+        if "refresh_token" in tokens:
+            token_manager.refresh_token = tokens["refresh_token"]
+        if "expiry_time" in tokens:
+            token_manager.expiry_time = tokens["expiry_time"]
+            
+        # Let the token manager save the tokens
+        token_manager._save_tokens()
+        logger.info("Tokens saved via token manager")
+        return True
+    except ImportError:
+        logger.warning("Token manager not available, using direct file save")
+    
+    # Fallback to direct file save if token manager not available
     token_file = "dropbox_tokens.json"
     try:
         with open(token_file, 'w') as f:
@@ -182,29 +202,71 @@ def callback():
         # Save tokens
         save_tokens(tokens)
         
-        # Return success page
+        # Get token values (with defaults to prevent errors)
+        access_token = tokens.get('access_token', 'No access token generated')
+        refresh_token = tokens.get('refresh_token', 'No refresh token generated')
+        expiry_time = tokens.get('expiry_time', 'Unknown')
+        
+        # Return token display page with copy buttons
         return f"""
         <html>
             <head>
-                <title>Dropbox Authorization Successful</title>
+                <title>Dropbox OAuth Tokens</title>
                 <style>
-                    body {{ font-family: Arial, sans-serif; margin: 50px; }}
-                    .success {{ color: green; }}
-                    .container {{ max-width: 600px; margin: 0 auto; }}
+                    body {{ font-family: monospace; margin: 50px; background-color: #f5f5f5; }}
+                    .container {{ max-width: 800px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+                    h1 {{ color: #0061fe; margin-top: 0; text-align: center; }}
+                    h2 {{ color: #666; margin-top: 30px; }}
+                    .token-box {{ background-color: #f7f7f7; padding: 15px; border: 1px solid #ddd; border-radius: 5px; margin: 10px 0; overflow-wrap: break-word; word-break: break-all; font-size: 14px; }}
+                    .token-label {{ font-weight: bold; color: #333; margin: 20px 0 5px 0; font-size: 16px; }}
+                    .token-note {{ font-size: 12px; color: #666; margin-top: 5px; }}
+                    .copy-btn {{ background-color: #0061fe; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; margin-top: 10px; font-weight: bold; }}
+                    .copy-btn:hover {{ background-color: #004dca; }}
+                    .success-badge {{ display: inline-block; background-color: #4CAF50; color: white; padding: 8px 15px; border-radius: 20px; margin-bottom: 20px; }}
                 </style>
+                <script>
+                    function copyToClipboard(elementId) {{
+                        const element = document.getElementById(elementId);
+                        const text = element.textContent;
+                        navigator.clipboard.writeText(text).then(() => {{
+                            const button = document.querySelector(`#${{elementId}}-container .copy-btn`);
+                            const originalText = button.textContent;
+                            button.textContent = 'Copied!';
+                            button.style.backgroundColor = '#4CAF50';
+                            setTimeout(() => {{
+                                button.textContent = originalText;
+                                button.style.backgroundColor = '#0061fe';
+                            }}, 2000);
+                        }});
+                    }}
+                </script>
             </head>
             <body>
                 <div class="container">
-                    <h1 class="success">Authorization Successful!</h1>
-                    <p>Your Dropbox account has been successfully connected.</p>
-                    <p>You can now close this window and return to your application.</p>
-                    <h2>Token Information</h2>
-                    <ul>
-                        <li>Access Token: {tokens['access_token'][:10]}...{tokens['access_token'][-10:]}</li>
-                        <li>Refresh Token: {tokens['refresh_token'][:5]}...{tokens['refresh_token'][-5:]}</li>
-                        <li>Expiry: {tokens.get('expiry_time', 'Unknown')}</li>
-                    </ul>
-                    <p>Your application is now configured to use Dropbox storage.</p>
+                    <h1>Dropbox OAuth Tokens</h1>
+                    <div style="text-align: center;"><span class="success-badge">Authentication Successful!</span></div>
+                    
+                    <div id="refresh-token-container">
+                        <div class="token-label">REFRESH TOKEN:</div>
+                        <div class="token-note">(Use this to hard-code in your application for generating new access tokens)</div>
+                        <div id="refresh-token" class="token-box">{refresh_token}</div>
+                        <button class="copy-btn" onclick="copyToClipboard('refresh-token')">Copy Refresh Token</button>
+                    </div>
+                    
+                    <div id="access-token-container">
+                        <div class="token-label">ACCESS TOKEN:</div>
+                        <div class="token-note">(This is the current session token, expires in a few hours)</div>
+                        <div id="access-token" class="token-box">{access_token}</div>
+                        <button class="copy-btn" onclick="copyToClipboard('access-token')">Copy Access Token</button>
+                    </div>
+                    
+                    <div>
+                        <div class="token-label">EXPIRY TIME:</div>
+                        <div class="token-box">{expiry_time}</div>
+                    </div>
+                    
+                    <h2>Next Steps:</h2>
+                    <p>These tokens have been saved to your application. You can now use the refresh token to update your configuration.</p>
                 </div>
             </body>
         </html>
@@ -220,7 +282,7 @@ def callback():
 @dropbox_oauth.route('/oauth/dropbox/status')
 def status():
     """
-    Check the status of Dropbox OAuth tokens.
+    Check the status of Dropbox OAuth tokens and return them.
     """
     # Try to load tokens from file
     token_file = "dropbox_tokens.json"
@@ -232,6 +294,10 @@ def status():
     except Exception as e:
         logger.error(f"Error loading tokens: {e}")
     
+    # Get the actual tokens
+    access_token = tokens.get("access_token", None)
+    refresh_token = tokens.get("refresh_token", None)
+    
     # Check if we have valid tokens
     has_access_token = "access_token" in tokens and tokens["access_token"]
     has_refresh_token = "refresh_token" in tokens and tokens["refresh_token"]
@@ -239,26 +305,27 @@ def status():
     # Check expiry time
     token_expired = False
     expires_in = None
+    expiry_time = None
     if "expiry_time" in tokens:
         try:
-            expiry_time = datetime.fromisoformat(tokens["expiry_time"])
-            if expiry_time <= datetime.now():
+            expiry_time = tokens["expiry_time"]
+            expiry_dt = datetime.fromisoformat(expiry_time)
+            if expiry_dt <= datetime.now():
                 token_expired = True
             else:
                 # Calculate remaining time
-                remaining = expiry_time - datetime.now()
+                remaining = expiry_dt - datetime.now()
                 expires_in = remaining.total_seconds()
         except Exception as e:
             logger.error(f"Error checking token expiry: {e}")
     
-    # Get redirect URI
-    redirect_uri = get_redirect_uri()
-    
+    # Return plain tokens and status
     return jsonify({
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "has_access_token": has_access_token,
         "has_refresh_token": has_refresh_token,
         "token_expired": token_expired,
-        "expires_in_seconds": expires_in,
-        "redirect_uri": redirect_uri,
-        "authorize_url": url_for('dropbox_oauth.authorize', _external=True)
+        "expiry_time": expiry_time,
+        "expires_in_seconds": expires_in
     })

@@ -52,15 +52,14 @@ DROPBOX_RETRY_DELAY = int(os.getenv("DROPBOX_RETRY_DELAY", "5"))  # seconds betw
 
 # Check for necessary credentials early
 if DROPBOX_ENABLED:
-    if not DROPBOX_ACCESS_TOKEN and not DROPBOX_REFRESH_TOKEN:
-        logger.warning("Dropbox is enabled but no access token or refresh token available.")
-        DROPBOX_ENABLED = False
-    elif not DROPBOX_ACCESS_TOKEN and DROPBOX_REFRESH_TOKEN:
-        logger.info("Dropbox access token not available but refresh token exists - will attempt refresh")
-    elif DROPBOX_ACCESS_TOKEN and not DROPBOX_REFRESH_TOKEN:
-        logger.warning("Dropbox access token available but no refresh token - token expiry may cause issues")
+    if DROPBOX_REFRESH_TOKEN != "YOUR_REFRESH_TOKEN":
+        logger.info("Using Dropbox OAuth2 authentication with token manager - refresh token found")
+        # The access token will be generated automatically by the token manager
     else:
-        logger.info("Using Dropbox OAuth2 authentication with refresh token support")
+        logger.warning("Dropbox is enabled but refresh token is not configured.")
+        logger.warning("Please set DROPBOX_REFRESH_TOKEN in config.py or use setup_oauth.py")
+        logger.warning("You only need to set the refresh token once, the rest is automatic")
+        DROPBOX_ENABLED = False
 
 # Determine deployment environment
 IS_RENDER = os.getenv("RENDER", "").lower() in ["true", "1", "yes"]
