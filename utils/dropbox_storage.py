@@ -910,6 +910,27 @@ def init_dropbox_storage(api_key: str = None, db_filename: str = "interactions.d
     """
     global _dropbox_storage
     
+    # First try to run the token refresh script if it exists
+    try:
+        if os.path.exists("refresh_token.py"):
+            import subprocess
+            logger.info("Running external refresh_token.py script")
+            try:
+                result = subprocess.run(
+                    [sys.executable, "refresh_token.py"], 
+                    capture_output=True,
+                    text=True,
+                    timeout=30  # Don't let it hang too long
+                )
+                logger.info(f"refresh_token.py exit code: {result.returncode}")
+                for line in result.stdout.splitlines():
+                    if line and not line.isspace():
+                        logger.info(f"refresh_token.py: {line}")
+            except Exception as e:
+                logger.warning(f"Error running refresh_token.py: {e}")
+    except Exception as e:
+        logger.warning(f"Could not execute refresh script: {e}")
+    
     with _initialization_lock:
         # If we already have an instance and it's working, return it
         if _dropbox_storage is not None and hasattr(_dropbox_storage, 'dbx'):
@@ -992,6 +1013,21 @@ def get_dropbox_storage():
         RuntimeError: If dropbox storage hasn't been initialized
     """
     if _dropbox_storage is None:
+        # Provide a helpful error message
+        logger.error(
+            "Dropbox storage not initialized. To use Dropbox storage, you need to: "
+            "1. Make sure DROPBOX_ENABLED=True in config.py "
+            "2. Set up OAuth tokens by following instructions in SETUP_DROPBOX.md "
+            "3. Ensure you have a valid Dropbox app with proper permissions"
+        )
         raise RuntimeError("Dropbox storage not initialized. Call init_dropbox_storage() first.")
+    
+    # Check if the client is properly authenticated
+    if not hasattr(_dropbox_storage, 'dbx') or _dropbox_storage.dbx is None:
+        logger.error(
+            "Dropbox client not authenticated. Please run gen_dropbox_token.py --generate "
+            "to set up proper authentication tokens."
+        )
+        raise RuntimeError("Dropbox client not authenticated.")
     
     return _dropbox_storage

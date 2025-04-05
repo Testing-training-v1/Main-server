@@ -49,6 +49,20 @@ if [ -n "$DROPBOX_APP_KEY" ] && [ -n "$DROPBOX_APP_SECRET" ]; then
     sed -i "s/DROPBOX_APP_KEY = os.getenv(\"DROPBOX_APP_KEY\", \"YOUR_APP_KEY\")/DROPBOX_APP_KEY = os.getenv(\"DROPBOX_APP_KEY\", \"$DROPBOX_APP_KEY\")/" config.py
     sed -i "s/DROPBOX_APP_SECRET = os.getenv(\"DROPBOX_APP_SECRET\", \"YOUR_APP_SECRET\")/DROPBOX_APP_SECRET = os.getenv(\"DROPBOX_APP_SECRET\", \"$DROPBOX_APP_SECRET\")/" config.py
     echo "Credentials updated in config.py"
+
+    # Output OAuth setup information
+    echo ""
+    echo "=== Dropbox OAuth Setup ==="
+    echo "Your application includes built-in OAuth routes for Dropbox authentication."
+    echo "You need to configure the following in your Dropbox App Console:"
+    RENDER_SERVICE_NAME="${RENDER_SERVICE_NAME:-backdoor-ai}"
+    REDIRECT_URI="https://${RENDER_SERVICE_NAME}.onrender.com/oauth/dropbox/callback"
+    echo "Redirect URI: $REDIRECT_URI"
+    echo ""
+    echo "To authorize Dropbox, visit:"
+    echo "https://${RENDER_SERVICE_NAME}.onrender.com/oauth/dropbox/authorize"
+    echo "==========================="
+    echo ""
 fi
 
 # Generate initial tokens if possible
