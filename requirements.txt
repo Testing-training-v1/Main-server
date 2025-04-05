@@ -18,7 +18,8 @@ joblib==1.3.2
 nltk==3.8.1
 
 # Storage integrations
-dropbox==11.36.2  # For Dropbox integration
+dropbox==11.36.2  # For Dropbox integration with OAuth2 support
+requests==2.31.0  # For OAuth2 token refresh
 pydrive2==1.15.4  # For Google Drive integration (optional)
 
 # System monitoring
