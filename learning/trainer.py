@@ -339,6 +339,93 @@ def train_new_model(db_path: str) -> str:
             clean_old_models_dropbox(config.MAX_MODELS_TO_KEEP)
         else:
             clean_old_models(model_dir)
+            
+        # Update the base model if running with Dropbox
+        if config.DROPBOX_ENABLED:
+            try:
+                from learning.model_orchestrator import update_base_model, create_training_summary, save_training_summary
+                
+                # Get model buffer for the trained model
+                model_path = model_info['coreml_path']
+                if os.path.exists(model_path):
+                    with open(model_path, 'rb') as f:
+                        model_buffer = io.BytesIO(f.read())
+                        
+                    # Update the base model in Dropbox
+                    update_success = update_base_model(model_buffer, model_version)
+                    if update_success:
+                        logger.info(f"Successfully updated base model to {model_version}")
+                        
+                        # Get previous model info for comparison if available
+                        prev_model_info = None
+                        try:
+                            from utils.db_helpers import get_connection
+                            with get_connection(db_path) as conn:
+                                cursor = conn.cursor()
+                                # Get the most recent model before this one
+                                cursor.execute("""
+                                    SELECT version, accuracy, training_data_size, is_ensemble, training_date
+                                    FROM model_versions 
+                                    WHERE version != ? 
+                                    ORDER BY training_date DESC LIMIT 1
+                                """, (model_version,))
+                                row = cursor.fetchone()
+                                if row:
+                                    prev_model_info = {
+                                        'version': row[0],
+                                        'accuracy': row[1],
+                                        'training_data_size': row[2],
+                                        'is_ensemble': bool(row[3]),
+                                        'training_date': row[4]
+                                    }
+                        except Exception as e:
+                            logger.warning(f"Could not get previous model info: {e}")
+                        
+                        # Create training data statistics
+                        training_data_stats = None
+                        if df is not None:
+                            try:
+                                # Count samples by intent
+                                intent_counts = df['detected_intent'].value_counts().to_dict()
+                                # Count samples with feedback
+                                feedback_count = df['has_feedback'].sum() if 'has_feedback' in df.columns else 0
+                                # Count positive feedback
+                                positive_feedback = df['is_good_feedback'].sum() if 'is_good_feedback' in df.columns else 0
+                                
+                                training_data_stats = {
+                                    'total_samples': len(df),
+                                    'intent_distribution': intent_counts,
+                                    'feedback_samples': int(feedback_count),
+                                    'positive_feedback': int(positive_feedback)
+                                }
+                            except Exception as e:
+                                logger.warning(f"Could not compute training data stats: {e}")
+                        
+                        # Get info about incorporated models
+                        incorporated_models = []
+                        if uploaded_models:
+                            # For Dropbox models
+                            incorporated_models = [{
+                                'id': model.get('id', 'unknown'),
+                                'device_id': model.get('device_id', 'unknown'),
+                                'size': model.get('size', 0),
+                                'weight': config.USER_MODEL_WEIGHT
+                            } for model in uploaded_models]
+                        
+                        # Save the training summary with comprehensive details
+                        summary = create_training_summary(
+                            model_info, 
+                            prev_model_info, 
+                            training_data_stats,
+                            incorporated_models
+                        )
+                        save_training_summary(summary)
+                    else:
+                        logger.warning(f"Failed to update base model to {model_version}")
+                else:
+                    logger.warning(f"Could not find model file at {model_path} to update base model")
+            except Exception as e:
+                logger.error(f"Error updating base model: {e}")
         
         logger.info(f"New model version {model_version} created successfully")
         return model_version
