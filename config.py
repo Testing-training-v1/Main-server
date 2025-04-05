@@ -23,18 +23,44 @@ STORAGE_MODE = os.getenv("STORAGE_MODE", "dropbox")
 
 # Dropbox Integration Settings - DEFINED EARLY to avoid NameError
 DROPBOX_ENABLED = os.getenv("DROPBOX_ENABLED", "True").lower() in ["true", "1", "yes"]
-# The API key is hardcoded here as requested to ensure it's always available
-DROPBOX_API_KEY = os.getenv("DROPBOX_API_KEY", "sl.u.AFpjxIfGDWdCGwYCSTvEt1YB8hmlxHixh0P_Myj6eoz7BLFiAPVeFTqomrRC5hvteZrqFjqFhFj65JmRN0nQTiTafi-BY_hNWfwPs9u-wtBcY05yKFnvx1d47QLA7hrepXlIoHQKZ4T6xxaXfgYZLnI1dtDoYrQ1mhPjP93uC91rMfIp5tg6qEvmM2uFs85qap1kHsJ7OX7gaVN_p_BF5ADL2y0e4JbMToXJB2GTinqBlpr8E1D3TFP2GHRJ6iq7aRs3mVSh9NvaR2Qw4uFlR-FkBwCsFXOmqwxPw7J9uK4malLF75yS_TdDFZdH3567x8VB8l_pN801lZ9c29kgPkmLfpIW_5uFcmlzKpJDBAIhawGE4MoD1AuuR68iAWM0e_tfub-6HcCI9xJPKrnm-TdsXcVxp9GISKf-QPdo6PXseDMw_naMQpC8_VLdmty8fYMepFl5g1v7WX3ofA2vxvZZbTZCe2SindqcqJyAMSYFClrdJx4GiUc_Ay9qwtRYFdoOd5uB56sPxSc2SAT1nk07EhdRk92r2U4QQHdeDaafzHnKXevUWARzrr00Nz72cRuxC3h39SBjpE45pryrN47jVdxSOFHryCeq0pgVfLk4TaaKnxx2rL82gRztJxxIMHykQ3Otsg60lDNN2eR-hT-kbatNAgEJlUEeXAxCyBYTp_cErCeA1hOcYGnYTc14AuZ6cqO0iLsxvocgJIl1a-Cvod_ENuX5d739t-dVwQkqD0ZdKeFKecR5R36gymF4ZpGHczxxbXtSeeg_sNFYKFXVqnkJQBEv1aez02OK6L8vi4C7krNbDrf6759sdsglq4ryDhGh_dFEAr2aH2KYDl9qRV4jbjwJwGf752Q3huYeuoTSJOdG0ychi4O0VEVHTj-9DnviPNHmma0bOz7XgmB6BGpjeLWD7hG6aEAjPaXS5jL3qokCBKqBDAhOjZiQHhVkiRegKEmWzRm11zHgjlzo1JDMsP5Q5mj7T9lEhHdmX9Q6Pl7_DAPA4kFs7wJkawPi3mbpY2b2U3B84r443_NNRcIddMvNEMIdE0jS_1cG3RVyqomULZt2M9Z-Ti0IeaiQRcdc5yrCFi0GDVNDtxC1CdG26Y5FCyQPcEOCGrzOghfptu55Ed_uWOTkaV9qlxvPBOfnwqpccUqM4ZNnNw8XQ6MdT76aD6_yQdI5mTmJjllMuaaZonGlMKZhPCSM0KCdIgN6mxSatb-v0Of9tcjcaxcO_RxtkpXWan-10qCqNWBv0yp0Jst10TqpzVyFGzSd10cON3WLV_eypNZ6sjkgqZjmmvmyKcCEg9c5Tjth7BsZlC1KMHFXl6N4ui9jHOn-l3NByaVoq6NaKelSVxM2kkkxKNl5LAzGBMLjleXVRZ12SblDIdtQTPgccAA27jtb5Z4Srfx2QsGvvGQEIgnOfWEcXylXzYjbw34rFAeSmpb6A1b2GDcB4keHBLuNcs0")
+
+# Dropbox OAuth2 Settings
+# App key and secret for OAuth2 flow - needed for token refresh
+DROPBOX_APP_KEY = os.getenv("DROPBOX_APP_KEY", "2bi422xpd3xd962")
+DROPBOX_APP_SECRET = os.getenv("DROPBOX_APP_SECRET", "j3yx0b41qdvfu86")
+
+# The access token - can be regenerated using refresh token
+DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN", "YOUR_ACCESS_TOKEN")
+
+# The refresh token - used to get new access tokens automatically
+DROPBOX_REFRESH_TOKEN = os.getenv("DROPBOX_REFRESH_TOKEN", "YOUR_REFRESH_TOKEN") 
+
+# Legacy API key - keeping for backwards compatibility
+DROPBOX_API_KEY = os.getenv("DROPBOX_API_KEY", DROPBOX_ACCESS_TOKEN)
+
+# Dropbox token refresh settings
+DROPBOX_TOKEN_EXPIRY = os.getenv("DROPBOX_TOKEN_EXPIRY", None)  # ISO format datetime string when token expires
+DROPBOX_AUTO_REFRESH = os.getenv("DROPBOX_AUTO_REFRESH", "True").lower() in ["true", "1", "yes"]
+
+# Other Dropbox settings
 DROPBOX_DB_FILENAME = os.getenv("DROPBOX_DB_FILENAME", "backdoor_ai_db.db")
 DROPBOX_MODELS_FOLDER = os.getenv("DROPBOX_MODELS_FOLDER", "backdoor_models")
 
+# Dropbox authentication retry settings
+DROPBOX_MAX_RETRIES = int(os.getenv("DROPBOX_MAX_RETRIES", "3"))
+DROPBOX_RETRY_DELAY = int(os.getenv("DROPBOX_RETRY_DELAY", "5"))  # seconds between retries
+
 # Check for necessary credentials early
-if DROPBOX_ENABLED and not DROPBOX_API_KEY:
-    logger.warning("Dropbox is enabled but no API key available.")
-    DROPBOX_ENABLED = False
-else:
-    # Log that we're using the hardcoded API key
-    logger.info("Using hardcoded Dropbox API key for authentication")
+if DROPBOX_ENABLED:
+    if not DROPBOX_ACCESS_TOKEN and not DROPBOX_REFRESH_TOKEN:
+        logger.warning("Dropbox is enabled but no access token or refresh token available.")
+        DROPBOX_ENABLED = False
+    elif not DROPBOX_ACCESS_TOKEN and DROPBOX_REFRESH_TOKEN:
+        logger.info("Dropbox access token not available but refresh token exists - will attempt refresh")
+    elif DROPBOX_ACCESS_TOKEN and not DROPBOX_REFRESH_TOKEN:
+        logger.warning("Dropbox access token available but no refresh token - token expiry may cause issues")
+    else:
+        logger.info("Using Dropbox OAuth2 authentication with refresh token support")
 
 # Determine deployment environment
 IS_RENDER = os.getenv("RENDER", "").lower() in ["true", "1", "yes"]

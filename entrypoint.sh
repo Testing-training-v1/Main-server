@@ -59,6 +59,15 @@ python -c "import nltk; nltk.data.path.append('$NLTK_DATA_DIR'); print(f'NLTK pa
 echo "Verifying scikit-learn installation..."
 python -c "import sklearn; print(f'scikit-learn version: {sklearn.__version__}')"
 
+# Refresh Dropbox tokens before starting the application
+if [ -f "./refresh_dropbox_token.sh" ]; then
+    echo "Running Dropbox token refresh..."
+    chmod +x ./refresh_dropbox_token.sh
+    ./refresh_dropbox_token.sh || echo "Token refresh failed, continuing anyway"
+else
+    echo "Dropbox token refresh script not found, skipping"
+fi
+
 # Display summary of environment
 echo "Environment summary:"
 echo "DATA_DIR=$DATA_DIR"

@@ -90,13 +90,36 @@ CORS(app)
 try:
     # Import storage factory
     from utils.storage_factory import initialize_storage, get_storage
-    
-    # Initialize all configured storage backends
-    initialize_storage()
-    
-    # Get the active storage backend
-    storage = get_storage()
-    logger.info(f"Storage initialized successfully using: {config.STORAGE_MODE}")
+
+    # Initialize all configured storage backends with retry logic
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # Initialize all configured storage backends
+            initialize_storage()
+        
+            # Get the active storage backend
+            storage = get_storage()
+            logger.info(f"Storage initialized successfully using: {config.STORAGE_MODE}")
+            break
+        except Exception as e:
+            if attempt < max_attempts:
+                logger.warning(f"Storage initialization failed (attempt {attempt}/{max_attempts}): {e}")
+                logger.info(f"Retrying in {attempt*2} seconds...")
+                time.sleep(attempt * 2)  # Exponential backoff
+            else:
+                logger.error(f"Storage initialization failed after {max_attempts} attempts: {e}")
+                if config.DROPBOX_ENABLED:
+                    logger.warning("Disabling Dropbox storage due to initialization failures")
+                    config.DROPBOX_ENABLED = False
+                    config.STORAGE_MODE = "local"
+                    # Try one more time with local storage
+                    try:
+                        initialize_storage()
+                        storage = get_storage()
+                        logger.info(f"Fallback to local storage successful")
+                    except Exception as local_e:
+                        logger.error(f"Even local storage initialization failed: {local_e}")
     
 except Exception as e:
     logger.error(f"Failed to initialize storage system: {e}")

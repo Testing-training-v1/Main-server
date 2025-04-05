@@ -55,7 +55,21 @@ NLTK_DIR="/tmp/nltk_data"
 mkdir -p $NLTK_DIR
 python -c "import nltk; nltk.download('punkt', download_dir='$NLTK_DIR', quiet=True); nltk.download('stopwords', download_dir='$NLTK_DIR', quiet=True); nltk.download('wordnet', download_dir='$NLTK_DIR', quiet=True); print('NLTK resources installed in', '$NLTK_DIR')"
 
-# Make the entrypoint executable
+# Make scripts executable
 chmod +x entrypoint.sh
+chmod +x refresh_dropbox_token.sh
+
+# Check if we need to update the config with hardcoded tokens
+if [ -n "$DROPBOX_APP_KEY" ] && [ -n "$DROPBOX_APP_SECRET" ]; then
+    echo "Updating config.py with Dropbox app credentials..."
+    # Use sed to replace the values in config.py
+    sed -i "s/DROPBOX_APP_KEY = os.getenv(\"DROPBOX_APP_KEY\", \"YOUR_APP_KEY\")/DROPBOX_APP_KEY = os.getenv(\"DROPBOX_APP_KEY\", \"$DROPBOX_APP_KEY\")/" config.py
+    sed -i "s/DROPBOX_APP_SECRET = os.getenv(\"DROPBOX_APP_SECRET\", \"YOUR_APP_SECRET\")/DROPBOX_APP_SECRET = os.getenv(\"DROPBOX_APP_SECRET\", \"$DROPBOX_APP_SECRET\")/" config.py
+    echo "Credentials updated in config.py"
+fi
+
+# Generate initial tokens if possible
+echo "Running initial Dropbox token refresh..."
+./refresh_dropbox_token.sh || echo "Initial token refresh skipped or failed"
 
 echo "Build completed successfully"

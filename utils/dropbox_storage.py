@@ -25,18 +25,36 @@ logger = logging.getLogger(__name__)
 class DropboxStorage:
     """Handles Dropbox storage operations for the Backdoor AI server."""
     
-    def __init__(self, api_key: str, db_filename: str = "interactions.db", models_folder_name: str = "backdoor_models"):
+    def __init__(self, access_token: str = None, refresh_token: str = None, 
+                 app_key: str = None, app_secret: str = None,
+                 db_filename: str = "interactions.db", 
+                 models_folder_name: str = "backdoor_models"):
         """
-        Initialize Dropbox storage.
+        Initialize Dropbox storage with OAuth2 support.
         
         Args:
-            api_key: Dropbox API key
+            access_token: OAuth2 access token for Dropbox API
+            refresh_token: OAuth2 refresh token to get new access tokens
+            app_key: Dropbox app key for OAuth2 flow
+            app_secret: Dropbox app secret for OAuth2 flow
             db_filename: Name of the database file in Dropbox
             models_folder_name: Name of the folder to store models in
         """
-        self.api_key = api_key
+        # OAuth credentials
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.app_key = app_key
+        self.app_secret = app_secret
+        
+        # Storage settings
         self.db_filename = db_filename
         self.models_folder_name = models_folder_name
+        
+        # Authentication state
+        self.auth_retries = 0
+        self.max_retries = 3  # Default, can be overridden from config
+        self.retry_delay = 5  # seconds between retries
+        self.last_token_refresh = 0
         
         # File tracking
         self.model_files = {}  # Mapping of model names to paths
@@ -53,37 +71,205 @@ class DropboxStorage:
         
         # Thread safety
         self.lock = threading.RLock()
+        self.auth_lock = threading.RLock()
         
-        # Connect to Dropbox
+        # Configure authentication retry settings from config if available
+        try:
+            import config
+            if hasattr(config, 'DROPBOX_MAX_RETRIES'):
+                self.max_retries = config.DROPBOX_MAX_RETRIES
+            if hasattr(config, 'DROPBOX_RETRY_DELAY'):
+                self.retry_delay = config.DROPBOX_RETRY_DELAY
+        except ImportError:
+            pass
+        
+        # Connect to Dropbox with authentication and retry logic
         self.dbx = self._authenticate()
         
         # Initialize resources
-        self._initialize()
+        if self.dbx:
+            self._initialize()
         
-    def _authenticate(self) -> dropbox.Dropbox:
+    def _authenticate(self) -> Optional[dropbox.Dropbox]:
         """
-        Authenticate with Dropbox using the provided API key.
+        Authenticate with Dropbox using OAuth2 with refresh token support.
         
         Returns:
-            dropbox.Dropbox: Authenticated Dropbox instance
+            dropbox.Dropbox: Authenticated Dropbox instance or None if authentication fails
+        """
+        with self.auth_lock:
+            # Check if we should try a refresh first
+            if self.access_token and self.refresh_token and self.app_key and self.app_secret:
+                return self._authenticate_with_refresh()
+            elif self.access_token:
+                return self._authenticate_with_token()
+            else:
+                logger.error("No authentication credentials available for Dropbox")
+                return None
+                
+    def _authenticate_with_token(self) -> Optional[dropbox.Dropbox]:
+        """
+        Authenticate with just an access token (legacy mode).
         
-        Raises:
-            Exception: If authentication fails
+        Returns:
+            dropbox.Dropbox: Authenticated instance or None
         """
         try:
-            # Initialize Dropbox client
-            dbx = dropbox.Dropbox(self.api_key)
-            # Check if the access token is valid
+            # Initialize Dropbox client with just the access token
+            dbx = dropbox.Dropbox(self.access_token)
+            # Verify the token works
             dbx.users_get_current_account()
-            logger.info("Successfully authenticated with Dropbox")
+            logger.info("Successfully authenticated with Dropbox using access token")
+            self.auth_retries = 0  # Reset retry counter on success
             return dbx
-            
+                
         except AuthError as e:
-            logger.error(f"Dropbox authentication failed: {e}")
-            raise
+            # If we have refresh capabilities, try that instead
+            if "expired_access_token" in str(e) and self.refresh_token and self.app_key and self.app_secret:
+                logger.warning("Access token expired, attempting refresh...")
+                return self._refresh_access_token()
+            else:
+                logger.error(f"Dropbox authentication failed: {e}")
+                self._handle_auth_failure(e)
+                return None
+                
         except Exception as e:
             logger.error(f"Dropbox initialization error: {e}")
-            raise
+            self._handle_auth_failure(e)
+            return None
+            
+    def _authenticate_with_refresh(self) -> Optional[dropbox.Dropbox]:
+        """
+        Authenticate with full OAuth2 refresh capability.
+        
+        Returns:
+            dropbox.Dropbox: Authenticated instance or None
+        """
+        try:
+            # First try the access token
+            if self.access_token:
+                try:
+                    dbx = dropbox.Dropbox(self.access_token)
+                    # Quick check of token validity
+                    dbx.users_get_current_account()
+                    logger.info("Successfully authenticated with existing access token")
+                    self.auth_retries = 0  # Reset retry counter on success
+                    return dbx
+                except AuthError as ae:
+                    if "expired_access_token" in str(ae):
+                        logger.info("Access token expired, refreshing...")
+                    else:
+                        logger.warning(f"Access token error: {ae}")
+                except Exception as e:
+                    logger.warning(f"Error checking access token: {e}")
+            
+            # If we got here, we need to refresh the token
+            return self._refresh_access_token()
+                
+        except Exception as e:
+            logger.error(f"Dropbox authentication error: {e}")
+            self._handle_auth_failure(e)
+            return None
+            
+    def _refresh_access_token(self) -> Optional[dropbox.Dropbox]:
+        """
+        Refresh the OAuth2 access token using the refresh token.
+        
+        Returns:
+            dropbox.Dropbox: New authenticated instance or None
+        """
+        try:
+            # Don't attempt refresh too frequently
+            current_time = time.time()
+            if current_time - self.last_token_refresh < 60:  # At most once per minute
+                logger.warning("Token refresh attempted too frequently, waiting...")
+                time.sleep(2)  # Small delay to prevent tight loops
+                return None
+                
+            logger.info("Refreshing Dropbox access token")
+            self.last_token_refresh = current_time
+            
+            # Create a new OAuth2 app and flow
+            app = dropbox.oauth.AppInfo(self.app_key, self.app_secret)
+            flow = dropbox.oauth.OAuth2FlowNoRedirect(app, "https://api.dropboxapi.com/oauth2/token", token_access_type="offline")
+            
+            # Get a new access token using the refresh token
+            import requests
+            token_url = "https://api.dropboxapi.com/oauth2/token"
+            data = {
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+                "client_id": self.app_key,
+                "client_secret": self.app_secret
+            }
+            
+            response = requests.post(token_url, data=data)
+            if response.status_code == 200:
+                token_data = response.json()
+                self.access_token = token_data["access_token"]
+                
+                # Update token in environment for future runs
+                os.environ["DROPBOX_ACCESS_TOKEN"] = self.access_token
+                
+                # Save to config if possible
+                try:
+                    import config
+                    config.DROPBOX_ACCESS_TOKEN = self.access_token
+                    # Set token expiry if available
+                    if "expires_in" in token_data:
+                        expiry_time = datetime.now() + timedelta(seconds=token_data["expires_in"])
+                        config.DROPBOX_TOKEN_EXPIRY = expiry_time.isoformat()
+                except (ImportError, AttributeError):
+                    pass
+                
+                # Create a new Dropbox instance with the refreshed token
+                logger.info("Successfully refreshed Dropbox access token")
+                
+                # Initialize Dropbox with the new token
+                dbx = dropbox.Dropbox(self.access_token)
+                # Verify it works
+                dbx.users_get_current_account()
+                self.auth_retries = 0  # Reset retry counter on success
+                return dbx
+            else:
+                logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error refreshing access token: {e}")
+            return None
+            
+    def _handle_auth_failure(self, error: Exception) -> None:
+        """
+        Handle authentication failures with retries.
+        
+        Args:
+            error: The exception that occurred
+        """
+        self.auth_retries += 1
+        
+        if self.auth_retries <= self.max_retries:
+            retry_delay = self.retry_delay * self.auth_retries  # Exponential backoff
+            logger.warning(f"Authentication failed, retrying in {retry_delay} seconds (attempt {self.auth_retries}/{self.max_retries})")
+            time.sleep(retry_delay)
+            
+            # Try to re-authenticate
+            if self.refresh_token and self.app_key and self.app_secret:
+                self.dbx = self._authenticate_with_refresh()
+            elif self.access_token:
+                self.dbx = self._authenticate_with_token()
+        else:
+            logger.error(f"Authentication failed after {self.max_retries} retries")
+            
+            # For extreme scenarios, try to reconnect with legacy API key
+            try:
+                import config
+                if hasattr(config, 'DROPBOX_API_KEY') and config.DROPBOX_API_KEY != self.access_token:
+                    logger.info("Attempting authentication with legacy API key as last resort")
+                    self.access_token = config.DROPBOX_API_KEY
+                    self.dbx = self._authenticate_with_token()
+            except ImportError:
+                pass
             
     def _initialize(self) -> None:
         """Initialize Dropbox resources (find or create DB file and models folder)."""
@@ -598,25 +784,99 @@ class DropboxStorage:
 
 # Module-level singleton instance
 _dropbox_storage = None
+_initialization_lock = threading.RLock()
 
-def init_dropbox_storage(api_key: str, db_filename: str = "interactions.db", models_folder_name: str = "backdoor_models"):
+def init_dropbox_storage(api_key: str = None, db_filename: str = "interactions.db", 
+                        models_folder_name: str = "backdoor_models", 
+                        access_token: str = None, refresh_token: str = None,
+                        app_key: str = None, app_secret: str = None) -> Optional['DropboxStorage']:
     """
-    Initialize Dropbox storage.
+    Initialize Dropbox storage with OAuth2 support.
     
     Args:
-        api_key: Dropbox API key
+        api_key: Legacy Dropbox API key (used as access_token if access_token not provided)
         db_filename: Name of the database file in Dropbox
         models_folder_name: Name of the folder to store models in
+        access_token: OAuth2 access token (preferred over api_key)
+        refresh_token: OAuth2 refresh token for getting new access tokens
+        app_key: Dropbox app key for OAuth2 flow
+        app_secret: Dropbox app secret for OAuth2 flow
         
     Returns:
-        DropboxStorage: The initialized storage instance
+        DropboxStorage: The initialized storage instance or None if initialization fails
     """
     global _dropbox_storage
     
-    if _dropbox_storage is None:
-        _dropbox_storage = DropboxStorage(api_key, db_filename, models_folder_name)
-    
-    return _dropbox_storage
+    with _initialization_lock:
+        # If we already have an instance and it's working, return it
+        if _dropbox_storage is not None and hasattr(_dropbox_storage, 'dbx'):
+            # Check if the connection is working
+            try:
+                # Quick verification that the token is still valid
+                _dropbox_storage.dbx.users_get_current_account()
+                logger.debug("Reusing existing Dropbox connection")
+                return _dropbox_storage
+            except Exception:
+                logger.info("Existing Dropbox connection is invalid, reinitializing")
+                _dropbox_storage = None
+        
+        # Get credentials from config if not provided
+        if access_token is None and refresh_token is None and app_key is None and app_secret is None:
+            try:
+                import config
+                access_token = getattr(config, 'DROPBOX_ACCESS_TOKEN', api_key)
+                refresh_token = getattr(config, 'DROPBOX_REFRESH_TOKEN', None)
+                app_key = getattr(config, 'DROPBOX_APP_KEY', None)
+                app_secret = getattr(config, 'DROPBOX_APP_SECRET', None)
+                
+                # Check for token expiry
+                token_expiry = getattr(config, 'DROPBOX_TOKEN_EXPIRY', None)
+                if token_expiry:
+                    try:
+                        expiry_time = datetime.fromisoformat(token_expiry)
+                        if expiry_time <= datetime.now():
+                            logger.warning("Access token has expired according to config")
+                            
+                            # Try to refresh if we have the capability
+                            if refresh_token and app_key and app_secret:
+                                from utils.dropbox_oauth import refresh_access_token
+                                logger.info("Attempting to refresh token automatically")
+                                result = refresh_access_token(app_key, app_secret, refresh_token)
+                                if result.get("success", False):
+                                    access_token = result["access_token"]
+                                    logger.info("Successfully refreshed access token")
+                                else:
+                                    logger.error("Failed to refresh token: " + result.get("error", "Unknown error"))
+                    except (ValueError, ImportError) as e:
+                        logger.warning(f"Error checking token expiry: {e}")
+            except ImportError:
+                # Fall back to using api_key as access_token
+                access_token = api_key
+        elif access_token is None:
+            # If only access_token is None but other OAuth params provided, use api_key as access_token
+            access_token = api_key
+        
+        try:
+            # Create storage with the best authentication method available
+            if refresh_token and app_key and app_secret:
+                logger.info("Initializing Dropbox with OAuth2 refresh capabilities")
+                _dropbox_storage = DropboxStorage(access_token, refresh_token, app_key, app_secret,
+                                                db_filename, models_folder_name)
+            else:
+                logger.info("Initializing Dropbox with access token only (no refresh capability)")
+                _dropbox_storage = DropboxStorage(access_token=access_token, db_filename=db_filename,
+                                               models_folder_name=models_folder_name)
+            
+            # Verify the connection is working
+            if _dropbox_storage and not hasattr(_dropbox_storage, 'dbx'):
+                logger.error("Dropbox initialization failed - no connection established")
+                _dropbox_storage = None
+                
+            return _dropbox_storage
+        except Exception as e:
+            logger.error(f"Error initializing Dropbox storage: {e}")
+            _dropbox_storage = None
+            return None
 
 def get_dropbox_storage():
     """

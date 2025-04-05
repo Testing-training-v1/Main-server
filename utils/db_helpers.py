@@ -36,24 +36,44 @@ _dropbox_storage = None
 _dropbox_initialized = False
 
 def _init_dropbox_storage():
-    """Initialize Dropbox storage if enabled and not already initialized"""
+    """
+    Initialize Dropbox storage if enabled and not already initialized.
+    Uses OAuth2 with refresh token if available.
+    """
     global _dropbox_storage, _dropbox_initialized
     
     if DROPBOX_ENABLED and not _dropbox_initialized:
         try:
             from utils.dropbox_storage import init_dropbox_storage
             
-            # Initialize using config values
+            # Initialize using config values with OAuth2 support
             import config
+            
+            # Check for OAuth2 credentials
+            access_token = getattr(config, 'DROPBOX_ACCESS_TOKEN', None)
+            refresh_token = getattr(config, 'DROPBOX_REFRESH_TOKEN', None)
+            app_key = getattr(config, 'DROPBOX_APP_KEY', None)
+            app_secret = getattr(config, 'DROPBOX_APP_SECRET', None)
+            
+            # Initialize with the best available authentication method
             _dropbox_storage = init_dropbox_storage(
-                config.DROPBOX_API_KEY,
-                config.DROPBOX_DB_FILENAME,
-                config.DROPBOX_MODELS_FOLDER
+                api_key=config.DROPBOX_API_KEY,
+                db_filename=config.DROPBOX_DB_FILENAME,
+                models_folder_name=config.DROPBOX_MODELS_FOLDER,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                app_key=app_key,
+                app_secret=app_secret
             )
             
-            _dropbox_initialized = True
-            logger.info("Dropbox storage integration initialized and enabled")
-            return True
+            if _dropbox_storage and hasattr(_dropbox_storage, 'dbx'):
+                _dropbox_initialized = True
+                logger.info("Dropbox storage integration initialized and enabled with OAuth2 support")
+                return True
+            else:
+                logger.warning("Dropbox initialization incomplete - storage object created but authentication failed")
+                return False
+                
         except Exception as e:
             logger.warning(f"Could not initialize Dropbox storage: {e}")
             logger.warning("Falling back to local storage")
