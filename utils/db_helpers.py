@@ -249,6 +249,20 @@ def store_interactions(db_path: str, data: Dict[str, Any]) -> int:
     Returns:
         int: Number of interactions stored
     """
+    # First try to store to Dropbox if enabled
+    if DROPBOX_ENABLED:
+        try:
+            # Import here to avoid circular imports
+            from utils.dropbox_user_data import store_interactions_to_dropbox
+            
+            # Store to Dropbox (async-like, don't wait for result)
+            # Note: We store to database regardless of Dropbox success
+            store_interactions_to_dropbox(data)
+            logger.info(f"Sent interaction data to Dropbox storage")
+        except Exception as e:
+            logger.error(f"Error storing interactions to Dropbox: {e}")
+    
+    # Store in local/memory database
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         try:

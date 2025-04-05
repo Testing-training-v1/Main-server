@@ -187,7 +187,7 @@ def clean_old_models(model_dir: str = None, keep_newest: int = config.MAX_MODELS
 
 def prepare_training_data(db_path: str) -> Optional[pd.DataFrame]:
     """
-    Load and prepare data for model training
+    Load and prepare data for model training from both database and Dropbox user_data
     
     Args:
         db_path: Path to the SQLite database
@@ -196,7 +196,7 @@ def prepare_training_data(db_path: str) -> Optional[pd.DataFrame]:
         DataFrame with prepared training data or None if data is insufficient
     """
     try:
-        # Load interactions with feedback
+        # Load interactions with feedback from database
         conn = sqlite3.connect(db_path)
         query = """
             SELECT i.*, f.rating, f.comment 
@@ -206,8 +206,44 @@ def prepare_training_data(db_path: str) -> Optional[pd.DataFrame]:
         df = pd.read_sql_query(query, conn)
         conn.close()
         
-        logger.info(f"Loaded {len(df)} interactions for training")
+        logger.info(f"Loaded {len(df)} interactions from database")
         
+        # If Dropbox is enabled, also load interactions from user_data folder
+        if config.DROPBOX_ENABLED:
+            try:
+                from utils.dropbox_user_data import load_user_data_for_training
+                
+                # Load interactions from Dropbox
+                dropbox_interactions = load_user_data_for_training()
+                
+                if dropbox_interactions:
+                    logger.info(f"Loaded {len(dropbox_interactions)} additional interactions from Dropbox user_data")
+                    
+                    # Convert interactions to DataFrame
+                    dropbox_df = pd.DataFrame(dropbox_interactions)
+                    
+                    # Make sure required columns exist
+                    required_columns = ['id', 'device_id', 'timestamp', 'user_message', 'ai_response', 
+                                       'detected_intent', 'confidence_score', 'model_version']
+                    
+                    # Check if we have all required columns
+                    if all(col in dropbox_df.columns for col in required_columns):
+                        # Add feedback columns with default values
+                        if 'rating' not in dropbox_df.columns:
+                            dropbox_df['rating'] = None
+                        if 'comment' not in dropbox_df.columns:
+                            dropbox_df['comment'] = None
+                            
+                        # Combine with main DataFrame
+                        df = pd.concat([df, dropbox_df], ignore_index=True).drop_duplicates(subset=['id'])
+                        logger.info(f"Combined data has {len(df)} total interactions")
+                    else:
+                        missing_cols = [col for col in required_columns if col not in dropbox_df.columns]
+                        logger.warning(f"Dropbox data missing required columns: {missing_cols}")
+            except Exception as e:
+                logger.error(f"Error loading user data from Dropbox: {e}")
+        
+        # Check if we have enough data
         if len(df) < config.MIN_TRAINING_DATA:
             logger.warning(f"Not enough data for training. Need at least {config.MIN_TRAINING_DATA} interactions.")
             return None
@@ -339,6 +375,93 @@ def train_new_model(db_path: str) -> str:
             clean_old_models_dropbox(config.MAX_MODELS_TO_KEEP)
         else:
             clean_old_models(model_dir)
+            
+        # Update the base model if running with Dropbox
+        if config.DROPBOX_ENABLED:
+            try:
+                from learning.model_orchestrator import update_base_model, create_training_summary, save_training_summary
+                
+                # Get model buffer for the trained model
+                model_path = model_info['coreml_path']
+                if os.path.exists(model_path):
+                    with open(model_path, 'rb') as f:
+                        model_buffer = io.BytesIO(f.read())
+                        
+                    # Update the base model in Dropbox
+                    update_success = update_base_model(model_buffer, model_version)
+                    if update_success:
+                        logger.info(f"Successfully updated base model to {model_version}")
+                        
+                        # Get previous model info for comparison if available
+                        prev_model_info = None
+                        try:
+                            from utils.db_helpers import get_connection
+                            with get_connection(db_path) as conn:
+                                cursor = conn.cursor()
+                                # Get the most recent model before this one
+                                cursor.execute("""
+                                    SELECT version, accuracy, training_data_size, is_ensemble, training_date
+                                    FROM model_versions 
+                                    WHERE version != ? 
+                                    ORDER BY training_date DESC LIMIT 1
+                                """, (model_version,))
+                                row = cursor.fetchone()
+                                if row:
+                                    prev_model_info = {
+                                        'version': row[0],
+                                        'accuracy': row[1],
+                                        'training_data_size': row[2],
+                                        'is_ensemble': bool(row[3]),
+                                        'training_date': row[4]
+                                    }
+                        except Exception as e:
+                            logger.warning(f"Could not get previous model info: {e}")
+                        
+                        # Create training data statistics
+                        training_data_stats = None
+                        if df is not None:
+                            try:
+                                # Count samples by intent
+                                intent_counts = df['detected_intent'].value_counts().to_dict()
+                                # Count samples with feedback
+                                feedback_count = df['has_feedback'].sum() if 'has_feedback' in df.columns else 0
+                                # Count positive feedback
+                                positive_feedback = df['is_good_feedback'].sum() if 'is_good_feedback' in df.columns else 0
+                                
+                                training_data_stats = {
+                                    'total_samples': len(df),
+                                    'intent_distribution': intent_counts,
+                                    'feedback_samples': int(feedback_count),
+                                    'positive_feedback': int(positive_feedback)
+                                }
+                            except Exception as e:
+                                logger.warning(f"Could not compute training data stats: {e}")
+                        
+                        # Get info about incorporated models
+                        incorporated_models = []
+                        if uploaded_models:
+                            # For Dropbox models
+                            incorporated_models = [{
+                                'id': model.get('id', 'unknown'),
+                                'device_id': model.get('device_id', 'unknown'),
+                                'size': model.get('size', 0),
+                                'weight': config.USER_MODEL_WEIGHT
+                            } for model in uploaded_models]
+                        
+                        # Save the training summary with comprehensive details
+                        summary = create_training_summary(
+                            model_info, 
+                            prev_model_info, 
+                            training_data_stats,
+                            incorporated_models
+                        )
+                        save_training_summary(summary)
+                    else:
+                        logger.warning(f"Failed to update base model to {model_version}")
+                else:
+                    logger.warning(f"Could not find model file at {model_path} to update base model")
+            except Exception as e:
+                logger.error(f"Error updating base model: {e}")
         
         logger.info(f"New model version {model_version} created successfully")
         return model_version

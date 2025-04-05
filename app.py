@@ -76,7 +76,8 @@ else:
     nltk.data.path.append(temp_nltk_dir)
     logger.info(f"Using local temporary directory for NLTK data: {temp_nltk_dir}")
 
-logger.info("Operating in memory-only mode with Dropbox storage - no local directories needed")
+if config.DROPBOX_ENABLED:
+    logger.info("Operating in memory-only mode with Dropbox storage - no local directories needed")
 
 # Ensure NLTK resources are available
 ensure_nltk_resources()
@@ -101,24 +102,29 @@ except Exception as e:
     logger.error(f"Failed to initialize storage system: {e}")
     logger.warning("Will attempt to use local storage directly")
 
-# Initialize database on startup - uses memory DB with Dropbox when enabled
+# Initialize database - use in-memory DB with Dropbox sync when enabled
 if config.DROPBOX_ENABLED:
-    logger.info("Initializing in-memory database with Dropbox synchronization")
+    logger.info("Using Dropbox for storage - initializing in-memory database")
     try:
         from utils.memory_db import init_memory_db
         mem_db = init_memory_db()  # Initialize shared in-memory DB
         logger.info("In-memory database initialized successfully")
+    except ImportError as ie:
+        logger.error(f"Could not import memory_db module: {ie}")
+        logger.warning("This is a critical error for Dropbox mode")
     except Exception as e:
         logger.error(f"Error initializing memory database: {e}")
+        logger.warning("Will attempt to continue with database initialization")
 
 # Initialize database schema (in-memory or file-based depending on config)
+logger.info("Initializing database schema")
 init_db(config.DB_PATH)
 
 import os
 # Import and initialize Dropbox storage functionality
 if config.DROPBOX_ENABLED:
     from utils.dropbox_storage import init_dropbox_storage, get_dropbox_storage
-    from learning.trainer_dropbox import check_base_model_in_dropbox
+    from learning.trainer_dropbox import check_base_model_in_dropbox, ensure_base_model_folder
     
     # Explicitly initialize Dropbox storage with API key from config
     try:
@@ -136,6 +142,11 @@ if config.DROPBOX_ENABLED:
 try:
     base_model_found = False
     if config.DROPBOX_ENABLED:
+        logger.info("Checking for base model in Dropbox")
+        # Ensure base_model folder exists
+        if ensure_base_model_folder():
+            logger.info("Base model folder confirmed in Dropbox")
+            
         # Check if base model exists in Dropbox
         base_model_available = check_base_model_in_dropbox()
         if base_model_available:
@@ -147,8 +158,8 @@ try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM model_versions WHERE version = '1.0.0'")
                 if cursor.fetchone()[0] == 0:
-                    # Add base model reference to database
-                    base_model_path = f"dropbox:/{config.DROPBOX_MODELS_FOLDER}/{config.BASE_MODEL_NAME}"
+                    # Add base model reference to database - prefer base_model folder
+                    base_model_path = f"dropbox:/{config.DROPBOX_BASE_MODEL_FOLDER}/model_latest.mlmodel"
                     cursor.execute("""
                         INSERT INTO model_versions 
                         (version, path, accuracy, training_data_size, training_date)
@@ -197,6 +208,71 @@ try:
     
     if not base_model_found:
         logger.warning("No base model found. Model training will not work correctly until a base model is provided.")
+        
+        # Try to load from in-memory buffer as a last resort
+        if config.DROPBOX_ENABLED:
+            logger.info("Attempting to load base model from memory buffer as fallback")
+            try:
+                from utils.model_download import get_base_model_buffer
+                model_buffer = get_base_model_buffer()
+                if model_buffer:
+                    logger.info("Successfully loaded base model from memory")
+                    base_model_found = True
+            except Exception as buffer_error:
+                logger.error(f"Failed to load base model from memory: {buffer_error}")
+    else:
+        # Base model was found - generate initial report
+        if config.DROPBOX_ENABLED:
+            logger.info("Generating initial base model report")
+            try:
+                # Get base model info from database
+                from utils.db_helpers import get_connection
+                from learning.model_orchestrator import create_training_summary, save_training_summary
+                
+                with get_connection(config.DB_PATH) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT version, path, accuracy, training_data_size, is_ensemble, training_date
+                        FROM model_versions 
+                        WHERE version = '1.0.0'
+                    """)
+                    row = cursor.fetchone()
+                    if row:
+                        # Create model info for report
+                        model_info = {
+                            'version': row[0],
+                            'path': row[1],
+                            'accuracy': row[2],
+                            'training_data_size': row[3],
+                            'is_ensemble': bool(row[4]) if row[4] is not None else False,
+                            'training_date': row[5]
+                        }
+                        
+                        # Create classes list - usually intents the model can detect
+                        model_info['classes'] = ["greeting", "help", "thanks", "goodbye", "weather", "time", "reminder"]
+                        
+                        # Create summary and save report
+                        summary = create_training_summary(
+                            model_info,
+                            None,  # No previous model to compare with
+                            {"total_samples": model_info['training_data_size']},  # Basic stats
+                            []  # No incorporated models for base model
+                        )
+                        save_training_summary(summary)
+                        logger.info("Initial base model report generated successfully")
+                    else:
+                        logger.warning("Could not find base model in database for report generation")
+            except Exception as e:
+                logger.error(f"Failed to generate initial base model report: {e}")
+                        
+    # Ensure user_data folder exists in Dropbox for storing interaction data
+    if config.DROPBOX_ENABLED:
+        try:
+            from utils.dropbox_user_data import ensure_user_data_folder
+            ensure_user_data_folder()
+            logger.info("User data folder ready for storing interaction data")
+        except Exception as e:
+            logger.error(f"Failed to ensure user_data folder exists: {e}")
 except Exception as e:
     logger.error(f"Error checking base model: {e}")
 # =============================================================================

@@ -335,19 +335,23 @@ class DropboxStorage:
                     'error': str(e)
                 }
     
-    def upload_model(self, data_or_path, model_name: str) -> Dict[str, Any]:
+    def upload_model(self, data_or_path, model_name: str, folder: str = None) -> Dict[str, Any]:
         """
         Upload a model file to Dropbox.
         
         Args:
             data_or_path: Either a file path, binary data, or file-like object
             model_name: Name to use for the model in Dropbox
+            folder: Optional specific folder to use, defaults to models_folder_name
             
         Returns:
             Dict with model information (success, name, path, etc.)
         """
         with self.lock:
-            dropbox_path = f"/{self.models_folder_name}/{model_name}"
+            # Determine the folder to upload to
+            upload_folder = folder if folder else self.models_folder_name
+            
+            dropbox_path = f"/{upload_folder}/{model_name}"
             file_data = None
             file_size = 0
             
@@ -377,6 +381,19 @@ class DropboxStorage:
                     file_data = data_or_path
                     file_size = len(file_data)
                 
+                # Ensure the folder exists
+                try:
+                    folder_path = f"/{upload_folder}"
+                    try:
+                        self.dbx.files_get_metadata(folder_path)
+                    except Exception:
+                        # Create folder if it doesn't exist
+                        logger.info(f"Creating folder: {folder_path}")
+                        self.dbx.files_create_folder_v2(folder_path)
+                except Exception as e:
+                    logger.error(f"Error ensuring folder exists: {e}")
+                    # Continue anyway - the upload will fail if folder doesn't exist
+                
                 # Upload to Dropbox
                 upload_result = self.dbx.files_upload(file_data, dropbox_path, 
                                                     mode=WriteMode.overwrite)
@@ -405,6 +422,62 @@ class DropboxStorage:
                 
             except Exception as e:
                 logger.error(f"Error uploading model {model_name}: {e}")
+                return {'success': False, 'error': str(e)}
+    
+    def download_model_to_memory(self, model_name: str, folder: str = None) -> Dict[str, Any]:
+        """
+        Download a model file from Dropbox to memory.
+        
+        Args:
+            model_name: Name of the model file to download
+            folder: Optional specific folder to look in, defaults to models_folder_name
+            
+        Returns:
+            Dict with success, model_buffer, size fields
+        """
+        with self.lock:
+            # Sync model files if needed
+            current_time = time.time()
+            if current_time - self.last_models_sync > self.models_sync_interval:
+                self._sync_model_files()
+            
+            # Determine the folder to look in
+            search_folder = folder if folder else self.models_folder_name
+            
+            # Find model path
+            dropbox_path = self.model_files.get(model_name)
+            if not dropbox_path:
+                # Try to find by constructing path
+                dropbox_path = f"/{search_folder}/{model_name}"
+                logger.info(f"Looking for model at {dropbox_path}")
+                
+            try:
+                # Check if the file exists
+                try:
+                    self.dbx.files_get_metadata(dropbox_path)
+                except Exception:
+                    logger.warning(f"Model {model_name} not found at {dropbox_path}")
+                    return {'success': False, 'error': 'Model not found'}
+                
+                # Download file to memory
+                result = self.dbx.files_download(dropbox_path)
+                
+                # Get content and create buffer
+                content = result[1].content
+                buffer = io.BytesIO(content)
+                buffer.seek(0)
+                
+                logger.info(f"Downloaded model {model_name} from Dropbox to memory")
+                
+                return {
+                    'success': True,
+                    'model_buffer': buffer,
+                    'size': len(content),
+                    'path': dropbox_path
+                }
+                
+            except Exception as e:
+                logger.error(f"Error downloading model {model_name} to memory: {e}")
                 return {'success': False, 'error': str(e)}
     
     def download_model(self, model_name: str, local_path: str = None) -> Dict[str, Any]:
