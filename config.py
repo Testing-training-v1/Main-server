@@ -33,7 +33,7 @@ DROPBOX_APP_SECRET = os.getenv("DROPBOX_APP_SECRET", "j3yx0b41qdvfu86")
 DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN", "YOUR_ACCESS_TOKEN")
 
 # The refresh token - used to get new access tokens automatically
-DROPBOX_REFRESH_TOKEN = os.getenv("DROPBOX_REFRESH_TOKEN", "YOUR_REFRESH_TOKEN") 
+DROPBOX_REFRESH_TOKEN = os.getenv("DROPBOX_REFRESH_TOKEN", "RvyL03RE5qAAAAAAAAAAAVMVebvE7jDx8Okd0ploMzr85c6txvCRXpJAt30mxrKF") 
 
 # Legacy API key - keeping for backwards compatibility
 DROPBOX_API_KEY = os.getenv("DROPBOX_API_KEY", DROPBOX_ACCESS_TOKEN)
